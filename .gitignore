@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# venvs
+.venv/
+venv/
+
+# OS/editor
+.DS_Store
+*.swp
+
+# Local data state
+.dmarcParser/

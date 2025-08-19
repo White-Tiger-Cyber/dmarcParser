@@ -1,0 +1,22 @@
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dmarcparser"
+version = "0.1.0"
+description = "DMARC aggregate (RUA) report parser and REPL for threat-hunting"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "rich>=13.7.1",
+    "tabulate>=0.9.0"
+]
+
+[project.scripts]
+dP = "dmarcparser.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dmarcparser*"]
+exclude = ["demo*", "tests*", "samples*", "scripts*"]
