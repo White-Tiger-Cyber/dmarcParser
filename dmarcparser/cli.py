@@ -4,6 +4,7 @@ from rich.table import Table
 from rich.prompt import Confirm
 from . import ingest, views
 from .repl import run_shell
+from .views import pct_timeline_view
 
 def _db_path_for(client_key):
     base = os.path.expanduser("~/.dmarcParser/clients")
@@ -43,6 +44,14 @@ def main(argv=None):
     ips.add_argument("--min-fails", type=int, default=1)
     ips.add_argument("--sort", choices=["fails","msgs","fail_rate"], default="fails")
 
+    pct = sub.add_parser(
+        "pct-timeline",
+        help="Daily msgs/fail%% vs observed DMARC pct",
+        description="Shows per-day totals with estimated fail rate and the observed DMARC pct reported by receivers (avg [min–max])."
+    )
+    pct.add_argument("--client", required=True)
+    pct.add_argument("--days", type=int, default=30)
+
     shell = sub.add_parser("shell", help="Interactive REPL (optionally ingest a path first)")
     # NOTE: --client is now OPTIONAL here
     shell.add_argument("--client", help="Client key (optional; choose in REPL if omitted)")
@@ -75,6 +84,11 @@ def main(argv=None):
 
     elif cmd == "ips":
         # ... unchanged ...
+        return 0
+
+    elif cmd == "pct-timeline":
+        db = _db_path_for(args.client)
+        pct_timeline_view(db, days=args.days)
         return 0
 
     elif cmd == "shell":

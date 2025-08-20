@@ -4,6 +4,7 @@ from rich.prompt import Prompt, Confirm
 from rich.markup import escape
 from rich.table import Table
 from . import views, ingest
+from .views import pct_timeline_view
 
 CLIENTS_DIR = os.path.expanduser("~/.dmarcParser/clients")
 HIST_DIR    = os.path.expanduser("~/.dmarcParser/history")
@@ -70,6 +71,27 @@ def _choose_client(console: Console):
 
         return raw
 
+def _resolve_db_or_reprompt(console: Console, client_key: str):
+    """
+    Given a client key, return an existing/created DB path.
+    If the user declines creation, return None so the caller can re-prompt.
+    """
+    db_path = _db_path(client_key)
+    if os.path.exists(db_path):
+        return db_path
+
+    create = Confirm.ask(f"No DB for '{client_key}'. Create at {db_path}?", default=True)
+    if create:
+        # Ensure parent dir exists; initializer can be a no-op if your DDL runs lazily.
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        # If you have an explicit initializer, call it here:
+        # store.init_db(db_path)
+        open(db_path, "a").close()
+        return db_path
+
+    console.print("[yellow]Returning to client selection...[/yellow]\n")
+    return None
+
 def _last_root_path(db_path):
     """Return the most recent root_path used for this client's DB, or None."""
     try:
@@ -84,9 +106,14 @@ def _last_root_path(db_path):
 def run_shell(db_path=None, client_key=None, pending_ingest=None):
     console = Console()
 
-    # Select or confirm client
-    if not client_key:
+    # initial client selection loop
+    while not db_path:
         client_key = _choose_client(console)
+        resolved = _resolve_db_or_reprompt(console, client_key)
+        if resolved:
+            db_path = resolved
+            break
+        # else: user said "no" → loop back to choose again
 
     db_path = _db_path(client_key)
     if not os.path.exists(db_path):
@@ -108,10 +135,9 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
     def _print_banner():
         console.print(f"[bold]dmarcParser[/bold] — client: [cyan]{client_key}[/cyan]  DB: {db_path}")
         console.print(
-            "Commands: clients | client <name> | summary [--days N] | domains [--limit N] "
-            "[--sort msgs|fails|fail_rate] [--days N] [--fail-only] | ips "
-            "[--failed-only] [--min-fails N] [--days N] [--limit N] [--sort fails|msgs|fail_rate] | "
-            "ingest <path> [--rescan] | rescan [--path DIR] [--dry-run] | paths | clear | help | exit"
+            "Commands: clients | client <name> | summary [--days N] | domains [--limit N] [--sort msgs|fails|fail_rate] [--days N] [--fail-only] | "
+            "ips [--failed-only] [--min-fails N] [--days N] [--limit N] [--sort fails|msgs|fail_rate] | "
+            "ingest <path> [--rescan] | rescan [--path DIR] [--dry-run] | paths | pct-timeline [--days N] | clear | help | exit"
         )
 
     _print_banner()
@@ -306,6 +332,32 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
                 for k in sorted(s.keys()):
                     t.add_row(k, str(s[k]))
                 console.print(t)
+
+            elif cmd == "pct-timeline":
+                # Usage:
+                #   pct-timeline
+                #   pct-timeline --days 14
+                days = 30
+                it = iter(parts[1:])
+                for tok in it:
+                    if tok == "--days":
+                        try:
+                            days = int(next(it))
+                        except StopIteration:
+                            console.print("[red]Usage:[/red] pct-timeline [--days N]")
+                            continue
+                    else:
+                        console.print(f"[yellow]Unknown option ignored:[/yellow] {tok}")
+
+                if not db_path:
+                    console.print("[red]No client DB selected. Use 'client <name>' first.[/red]")
+                    continue
+
+                try:
+                    pct_timeline_view(db_path, days=days)
+                except Exception as e:
+                    console.print(f"[red]pct-timeline error:[/red] {e}")
+                continue
 
             else:
                 console.print(f"[red]Unknown command:[/red] {cmd}. Type 'help'.")

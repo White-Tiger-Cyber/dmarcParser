@@ -12,48 +12,140 @@ def _date_from_epoch(ts):
     except Exception:
         return None
 
+def pct_timeline_view(db_path, days=30):
+    """
+    Daily rollup: msgs, estimated fails, fail %, and observed DMARC pct
+    (avg [min–max] of numeric pct values reported that day).
+    """
+    con = _open(db_path)
+    cur = con.cursor()
+
+    # Build WHERE + params (avoid '? inside quotes')
+    if days:
+        rec_where = "WHERE rc.day >= date('now', ?)"
+        rec_params = (f"-{days} day",)
+        rep_where = "AND date(rp.end_ts,'unixepoch') >= date('now', ?)"
+        rep_params = (f"-{days} day",)
+    else:
+        rec_where = ""
+        rec_params = ()
+        rep_where = ""
+        rep_params = ()
+
+    # 1) Messages per day
+    cur.execute(f"""
+        SELECT rc.day AS d, SUM(rc.count) AS msgs
+        FROM records rc
+        {rec_where}
+        GROUP BY rc.day
+        ORDER BY rc.day
+    """, rec_params)
+    msgs_by_day = {d: (m or 0) for d, m in cur.fetchall()}
+
+    # 2) Estimated fails per day
+    cur.execute(f"""
+        SELECT rc.day AS d, SUM(rc.count) AS fails
+        FROM records rc
+        {rec_where} {"AND" if rec_where else "WHERE"} (
+            COALESCE(rc.disposition,'') IN ('reject','quarantine')
+            OR (LOWER(COALESCE(rc.spf_result,''))!='pass' AND LOWER(COALESCE(rc.dkim_result,''))!='pass')
+        )
+        GROUP BY rc.day
+        ORDER BY rc.day
+    """, rec_params)
+    fails_by_day = {d: (f or 0) for d, f in cur.fetchall()}
+
+    # 3) Observed pct stats per day from reports (avg [min–max])
+    cur.execute(f"""
+        SELECT date(rp.end_ts,'unixepoch') AS d,
+               CAST(rp.pct AS INTEGER) AS pct_val
+        FROM reports rp
+        WHERE rp.pct GLOB '[0-9]*'
+        {rep_where}
+        ORDER BY d, pct_val
+    """, rep_params)
+    pct_stats = {}
+    for d, val in cur.fetchall():
+        pct_stats.setdefault(d, []).append(val)
+
+    # Render
+    tbl = Table(title="DMARC pct timeline (daily)")
+    tbl.add_column("Date")
+    tbl.add_column("Msgs", justify="right")
+    tbl.add_column("Fails", justify="right")
+    tbl.add_column("Fail%", justify="right")
+    tbl.add_column("Observed pct", justify="right")  # avg [min–max]
+
+    all_days = sorted(set(msgs_by_day) | set(fails_by_day) | set(pct_stats))
+    for d in all_days:
+        m = msgs_by_day.get(d, 0)
+        f = fails_by_day.get(d, 0)
+        rate = (f / m * 100.0) if m else 0.0
+        if d in pct_stats and pct_stats[d]:
+            vals = pct_stats[d]
+            avg = sum(vals) / len(vals)
+            pct_cell = f"{avg:.0f} [{min(vals)}–{max(vals)}]"
+        else:
+            pct_cell = "—"
+        tbl.add_row(d, str(m), str(f), f"{rate:.1f}%", pct_cell)
+
+    Console().print(tbl)
+
 def summary_view(db_path, days=None):
-    """High-level summary: totals, distincts, date range, rough fail rate."""
+    """High-level summary: totals, distincts, date range, rough fail rate (all window-aware)."""
     conn = _open(db_path)
     c = conn.cursor()
 
-    where = ""
+    where_reports = ""
+    where_join = ""
     params = []
     if days:
         c.execute("SELECT MAX(end_ts) FROM reports")
         max_end = c.fetchone()[0]
         if max_end:
             cutoff = int(max_end) - days * 86400
-            where = "WHERE end_ts >= ?"
+            where_reports = "WHERE end_ts >= ?"
+            where_join = "JOIN reports r ON r.fp_report = rec.fp_report AND r.end_ts >= ?"
             params = [cutoff]
 
-    # totals
-    c.execute(f"SELECT COUNT(*) FROM reports {where}", params)
+    # totals (reports count)
+    c.execute(f"SELECT COUNT(*) FROM reports {where_reports}", params)
     reports = c.fetchone()[0]
-    c.execute("SELECT COALESCE(SUM(count),0) FROM records")
-    msgs = c.fetchone()[0]
 
-    # date range
-    c.execute(f"SELECT MIN(end_ts), MAX(end_ts) FROM reports {where}", params)
+    # msgs & fails within window via join
+    c.execute(f"""
+        SELECT
+          COALESCE(SUM(rec.count),0) AS msgs,
+          COALESCE(SUM(CASE
+              WHEN (rec.disposition IN ('reject','quarantine')
+                 OR (LOWER(COALESCE(rec.spf_result,''))!='pass' AND LOWER(COALESCE(rec.dkim_result,''))!='pass'))
+              THEN rec.count ELSE 0 END),0) AS fails
+        FROM records rec
+        {where_join}
+    """, params)
+    row = c.fetchone() or (0,0)
+    msgs, fails = row[0], row[1]
+    fail_rate = (fails / msgs * 100.0) if msgs else 0.0
+
+    # date range from reports
+    c.execute(f"SELECT MIN(end_ts), MAX(end_ts) FROM reports {where_reports}", params)
     r = c.fetchone()
     start = _date_from_epoch(r[0]) if r and r[0] else None
     end   = _date_from_epoch(r[1]) if r and r[1] else None
 
-    # distincts
-    c.execute("SELECT COUNT(DISTINCT header_from) FROM records WHERE header_from IS NOT NULL")
-    uniq_domains = c.fetchone()[0]
-    c.execute("SELECT COUNT(DISTINCT source_ip) FROM records")
-    uniq_ips = c.fetchone()[0]
+    # distincts (window-aware)
+    c.execute(f"""
+        SELECT COUNT(DISTINCT rec.header_from)
+        FROM records rec {where_join}
+        WHERE rec.header_from IS NOT NULL
+    """, params)
+    uniq_domains = c.fetchone()[0] or 0
 
-    # fail estimate: DMARC disposition reject/quarantine OR both SPF/DKIM != pass
-    c.execute("""
-        SELECT COALESCE(SUM(count),0) FROM records
-        WHERE disposition IN ('reject','quarantine')
-           OR ((spf_result IS NULL OR LOWER(spf_result)!='pass')
-            AND (dkim_result IS NULL OR LOWER(dkim_result)!='pass'))
-    """)
-    fails = c.fetchone()[0] or 0
-    fail_rate = (fails / msgs * 100.0) if msgs else 0.0
+    c.execute(f"""
+        SELECT COUNT(DISTINCT rec.source_ip)
+        FROM records rec {where_join}
+    """, params)
+    uniq_ips = c.fetchone()[0] or 0
 
     table = Table(title="SUMMARY")
     table.add_column("Metric")
@@ -85,7 +177,6 @@ def domains_view(db_path, limit=25, sort="fail_rate", days=None, fail_only=False
     conn = _open(db_path)
     c = conn.cursor()
 
-    # optional time window (by reports.end_ts)
     join_where = ""
     params = []
     if days:
@@ -103,7 +194,6 @@ def domains_view(db_path, limit=25, sort="fail_rate", days=None, fail_only=False
         {join_where}
     """, params).fetchall()
 
-    # aggregate
     agg = {}
     for hfrom, ip, count, disp, spf_res, spf_dom, dkim_res, dkim_json in rows:
         if not hfrom:
@@ -121,7 +211,6 @@ def domains_view(db_path, limit=25, sort="fail_rate", days=None, fail_only=False
             a["aligned"] += cnt
         a["ips"].add(ip)
 
-    # format rows
     rows_out = []
     for hfrom, a in agg.items():
         if fail_only and a["fails"] == 0:
@@ -176,14 +265,14 @@ def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=1, sort=
     conn = _open(db_path)
     c = conn.cursor()
 
-    join_where = ""
     params = []
+    where = ""
     if days:
         c.execute("SELECT MAX(end_ts) FROM reports")
         max_end = c.fetchone()[0]
         if max_end:
             cutoff = int(max_end) - days * 86400
-            join_where = "JOIN reports r ON r.fp_report = rec.fp_report WHERE r.end_ts >= ?"
+            where = "WHERE r.end_ts >= ?"
             params = [cutoff]
 
     rows = c.execute(f"""
@@ -191,7 +280,7 @@ def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=1, sort=
                rec.spf_result, rec.dkim_result, rec.header_from, r.end_ts
         FROM records rec
         JOIN reports r ON r.fp_report = rec.fp_report
-        {("WHERE r.end_ts >= ?" if days else "")}
+        {where}
     """, params).fetchall()
 
     agg = {}

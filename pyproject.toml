@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dmarcparser"
-version = "0.1.0"
+version = "0.1.1"
 description = "DMARC aggregate (RUA) report parser and REPL for threat-hunting"
 readme = "README.md"
 requires-python = ">=3.9"
