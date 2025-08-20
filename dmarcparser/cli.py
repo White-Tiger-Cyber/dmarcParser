@@ -43,6 +43,7 @@ def main(argv=None):
     ips.add_argument("--failed-only", action="store_true")
     ips.add_argument("--min-fails", type=int, default=1)
     ips.add_argument("--sort", choices=["fails","msgs","fail_rate"], default="fails")
+    ips.add_argument("--auth", action="store_true", help="Show SPF/DKIM/DMARC breakdown per IP")
 
     pct = sub.add_parser(
         "pct-timeline",
@@ -83,7 +84,14 @@ def main(argv=None):
         return 0
 
     elif cmd == "ips":
-        # ... unchanged ...
+        db = _db_path_for(args.client)  # or _db_path(args.client) in your codebase
+        ips_view(db,
+                 limit=args.limit,
+                 days=args.days,
+                 failed_only=args.failed_only,
+                 min_fails=args.min_fails,
+                 sort=args.sort,
+                 auth_breakdown=args.auth)
         return 0
 
     elif cmd == "pct-timeline":

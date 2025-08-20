@@ -4,7 +4,7 @@ from rich.prompt import Prompt, Confirm
 from rich.markup import escape
 from rich.table import Table
 from . import views, ingest
-from .views import pct_timeline_view
+from .views import pct_timeline_view, summary_view, domains_view, ips_view
 
 CLIENTS_DIR = os.path.expanduser("~/.dmarcParser/clients")
 HIST_DIR    = os.path.expanduser("~/.dmarcParser/history")
@@ -211,16 +211,66 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
                 views.domains_view(db_path, limit=limit, sort=sort, days=days, fail_only=fail_only)
 
             elif cmd == "ips":
-                limit = 50; days=None; failed_only=False; min_fails=1; sort="fails"
-                it = iter(parts[1:])
+                # defaults
+                limit = 50
+                days = None
+                failed_only = False
+                min_fails = 1
+                sort = "fails"
+                auth = False  # new: show SPF/DKIM/DMARC breakdown
+
+                # safe iterator even when no args
+                it = iter(parts[1:]) if len(parts) > 1 else iter(())
+
                 for tok in it:
-                    if tok == "--limit":      limit      = int(next(it))
-                    elif tok == "--days":     days       = int(next(it))
-                    elif tok == "--failed-only": failed_only = True
-                    elif tok == "--min-fails": min_fails  = int(next(it))
-                    elif tok == "--sort":     sort       = next(it)
-                views.ips_view(db_path, limit=limit, days=days, failed_only=failed_only,
-                               min_fails=min_fails, sort=sort)
+                    if tok == "--days":
+                        try:
+                            days = int(next(it))
+                        except StopIteration:
+                            console.print("[red]Usage:[/red] ips [--days N] [--limit N] [--failed-only] [--min-fails N] [--sort fails|msgs|fail_rate] [--auth]")
+                            continue
+                    elif tok == "--limit":
+                        try:
+                            limit = int(next(it))
+                        except StopIteration:
+                            console.print("[red]Usage:[/red] ips --limit N")
+                            continue
+                    elif tok == "--failed-only":
+                        failed_only = True
+                    elif tok == "--min-fails":
+                        try:
+                            min_fails = int(next(it))
+                        except StopIteration:
+                            console.print("[red]Usage:[/red] ips --min-fails N")
+                            continue
+                    elif tok == "--sort":
+                        try:
+                            sort = next(it)
+                        except StopIteration:
+                            console.print("[red]Usage:[/red] ips --sort fails|msgs|fail_rate")
+                            continue
+                    elif tok == "--auth":
+                        auth = True
+                    else:
+                        console.print(f"[yellow]Unknown option ignored:[/yellow] {tok}")
+
+                if not db_path:
+                    console.print("[red]No client DB selected. Use 'client <name>' first.[/red]")
+                    continue
+
+                try:
+                    ips_view(
+                        db_path,
+                        limit=limit,
+                        days=days,
+                        failed_only=failed_only,
+                        min_fails=min_fails,
+                        sort=sort,
+                        auth_breakdown=auth,   # <- wires the new breakdown flag
+                    )
+                except Exception as e:
+                    console.print(f"[red]ips error:[/red] {e}")
+                continue
 
             elif cmd == "ingest":
                 if len(parts) < 2:
