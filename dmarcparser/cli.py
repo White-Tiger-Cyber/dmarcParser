@@ -62,27 +62,25 @@ def main(argv=None):
     pct.add_argument("--client", required=True, help="Client key (database name)")
     pct.add_argument("--days", type=int, default=30, help="How many days back to include (default: 30)")
 
-    shell = sub.add_parser("shell", help="Interactive REPL (optionally ingest a path first)")
-    # NOTE: --client is now OPTIONAL here
-    shell.add_argument("--client", help="Client key (optional; choose in REPL if omitted)")
-    shell.add_argument("--path", help="Optional path to ingest before entering shell")
-    shell.add_argument("--rescan", action="store_true")
+    shell = sub.add_parser("shell", help="Interactive REPL (choose client or skip chooser with --client)")
+    # If provided, --client will open the REPL directly on that client; otherwise you'll get the chooser.
+    shell.add_argument("--client", help="Client key (skip chooser if provided)")
 
-    if argv and not argv[0].startswith("-") and os.path.exists(argv[0]):
-        args = ing.parse_args(argv); cmd = "ingest"
-    else:
-        args = ap.parse_args(argv); cmd = args.cmd
-
-    console = Console()
-
-    if argv and not argv[0].startswith("-") and os.path.exists(argv[0]):
-        args = ing.parse_args(argv); cmd = "ingest"
-    elif not argv:
-        # open shell with no client pre-selected
+    # --- dispatch (prefer known subcommands over "path means ingest") ---
+    KNOWN = {"ingest", "summary", "domains", "ips", "pct-timeline", "shell"}
+    if not argv:
+        # No args -> open interactive shell with chooser
         run_shell(db_path=None, client_key=None, pending_ingest=None)
         return 0
+    first = argv[0]
+    if first in KNOWN:
+        args = ap.parse_args(argv); cmd = args.cmd
+    elif (not first.startswith("-")) and os.path.exists(first):
+        # Treat first-arg path as 'ingest' only when no subcommand is present
+        args = ing.parse_args(argv); cmd = "ingest"
     else:
         args = ap.parse_args(argv); cmd = args.cmd
+    # --------------------------------------------------------------------
 
     if cmd == "ingest":
         try:
@@ -100,16 +98,18 @@ def main(argv=None):
             console.print("\n[red]^C[/red] command interrupted")
             return 130
 
+    elif cmd == "pct-timeline":
         try:
-            db = _db_path(args.client)  # or _db_path_for(...) if that’s your helper
+            db = _db_path_for(args.client)
             pct_timeline_view(db, days=args.days)
             return 0
         except KeyboardInterrupt:
             console.print("\n[red]^C[/red] pct-timeline interrupted")
             return 130
 
+    elif cmd == "ips":
         try:
-            db = _db_path(args.client)
+            db = _db_path_for(args.client)
             ips_view(
                 db,
                 limit=args.limit,
@@ -125,10 +125,10 @@ def main(argv=None):
             return 130
 
     elif cmd == "shell":
-        # >>> FIX: do NOT precompute DB when args.client is None
-        pending = (os.path.abspath(args.path), bool(args.rescan)) if args.path else None
+        # If --client is provided, open the REPL directly on that client (skip chooser)
         try:
-            run_shell(db_path=None, client_key=args.client, pending_ingest=pending)
+            dbp = _db_path_for(args.client) if args.client else None
+            run_shell(db_path=dbp, client_key=args.client, pending_ingest=None)
             return 0
         except KeyboardInterrupt:
             console.print("\n[red]^C[/red] shell interrupted")
