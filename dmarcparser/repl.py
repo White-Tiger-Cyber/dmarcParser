@@ -135,9 +135,11 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
     def _print_banner():
         console.print(f"[bold]dmarcParser[/bold] — client: [cyan]{client_key}[/cyan]  DB: {db_path}")
         console.print(
-            "Commands: clients | client <name> | summary [--days N] | domains [--limit N] [--sort msgs|fails|fail_rate] [--days N] [--fail-only] | "
-            "ips [--failed-only] [--min-fails N] [--days N] [--limit N] [--sort fails|msgs|fail_rate] | "
-            "ingest <path> [--rescan] | rescan [--path DIR] [--dry-run] | paths | pct-timeline [--days N] | clear | help | exit"
+            "Commands: clients | client <name> | summary \\[--days N\\] | "
+            "domains \\[--limit N\\] \\[--sort msgs|fails|fail_rate\\] \\[--days N\\] \\[--fail-only\\] | "
+            "ips \\[--failed-only\\] \\[--min-fails N\\] \\[--days N\\] \\[--limit N\\] \\[--sort fails|msgs|fail_rate\\] \\[--auth\\] | "
+            "pct-timeline \\[--days N\\] | ingest <path> \\[--rescan\\] | rescan \\[--path DIR\\] \\[--dry-run\\] | "
+            "paths | clear | help | exit"
         )
 
     _print_banner()
@@ -165,7 +167,26 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
                 break
 
             elif cmd == "help":
-                _print_banner()
+                # keep the first few lines as you had them...
+                console.print("[bold]clients[/bold] – list known client databases")
+                console.print("[bold]client <name>[/bold] – switch to (or create) a client DB")
+                console.print("[bold]paths[/bold] – show directories for DB and history")
+                console.print("[bold]ingest <path>[/bold] [--rescan] – ingest DMARC XMLs from a directory (recurses; .xml/.gz/.zip)")
+                console.print("[bold]rescan[/bold] [--path DIR] [--dry-run] – re-evaluate ingest decisions on a path")
+                console.print("[bold]summary[/bold] [--days N] – totals, distincts, fail%%, and date range (window-aware)")
+                # for lines with bracketed options: bold label + plain options
+                console.print("[bold]domains[/bold] ", end="")
+                console.print("[--days N] [--limit N] [--sort msgs|fails|fail_rate] [--fail-only] — aggregate by header_from", markup=False)
+
+                console.print("[bold]ips[/bold] ", end="")
+                console.print("[--days N] [--limit N] [--sort fails|msgs|fail_rate] [--failed-only] [--min-fails N] [--auth] — aggregate by IP; --auth adds SPF=pass, DKIM=pass, Both=pass, DMARC disposition", markup=False)
+
+                console.print("[bold]pct-timeline[/bold] ", end="")
+                console.print("[--days N] — daily msgs, fails, fail%% with observed DMARC pct (avg [min–max])", markup=False)
+
+                console.print("[bold]clear[/bold] – clear the screen")
+                console.print("[bold]exit[/bold] | [bold]quit[/bold] – leave the shell")
+                continue
 
             elif cmd == "clients":
                 cs = _list_clients()

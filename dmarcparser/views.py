@@ -244,14 +244,15 @@ def domains_view(db_path, limit=25, sort="fail_rate", days=None, fail_only=False
     table.add_column("Aligned%", justify="right")
     table.add_column("IPs", justify="right")
 
-    for r in rows_out[:limit] if limit else rows_out:
+    # Render rows
+    for rd in rows_out[:limit] if limit else rows_out:
         table.add_row(
-            r["domain"],
-            str(r["msgs"]),
-            str(r["fails"]),
-            f"{r['fail_rate']:.1f}%",
-            f"{r['aligned_rate']:.1f}%",
-            str(r["ips"]),
+            rd["domain"],
+            str(rd["msgs"]),
+            str(rd["fails"]),
+            f"{rd['fail_rate']:.1f}%",
+            f"{rd['aligned_rate']:.1f}%",
+            str(rd["ips"]),
         )
 
     Console().print(table)
@@ -307,8 +308,9 @@ def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=1, sort=
         if spf_fail and dkim_fail:
             a["both_fail"] += cnt
 
+        # failure as in "DMARC would fail"
         if disp in ("reject", "quarantine") or (spf_fail and dkim_fail):
-            a["fails"] += cnt  # same failure definition as before
+            a["fails"] += cnt
 
         if disp == "reject":
             a["dmarc_reject"] += cnt
@@ -332,6 +334,7 @@ def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=1, sort=
         if fails < (min_fails or 1):
             continue
         fail_rate = (fails / msgs * 100.0) if msgs else 0.0
+
         row = {
             "ip": ip,
             "msgs": msgs,
@@ -340,7 +343,9 @@ def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=1, sort=
             "domains": len(domains_by_ip[ip]),
             "last_seen": _date_from_epoch(last_seen.get(ip)),
         }
+
         if auth_breakdown:
+            # retain fail counters for later pass computation
             row.update({
                 "spf_fail": a["spf_fail"],
                 "dkim_fail": a["dkim_fail"],
@@ -349,8 +354,10 @@ def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=1, sort=
                 "dmarc_quarantine": a["dmarc_quarantine"],
                 "dmarc_none": a["dmarc_none"],
             })
+
         out.append(row)
 
+    # sorting
     key = {
         "fails":     lambda x: (-x["fails"], -x["msgs"]),
         "msgs":      lambda x: (-x["msgs"], -x["fails"]),
@@ -358,6 +365,7 @@ def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=1, sort=
     }.get(sort, lambda x: (-x["fails"], -x["msgs"]))
     out.sort(key=key)
 
+    # table header
     title = f"IPs (top {limit})" if limit else "IPs"
     table = Table(title=title)
     table.add_column("IP")
@@ -365,32 +373,38 @@ def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=1, sort=
     table.add_column("Fails", justify="right")
     table.add_column("Fail%", justify="right")
     if auth_breakdown:
-        table.add_column("SPF=pass", justify="right")
-        table.add_column("DKIM=pass", justify="right")
-        table.add_column("Both=pass", justify="right")
+        table.add_column("SPF=fail", justify="right")
+        table.add_column("DKIM=fail", justify="right")
+        table.add_column("Both=fail", justify="right")
         table.add_column("DMARC reject", justify="right")
         table.add_column("DMARC quarantine", justify="right")
         table.add_column("DMARC none", justify="right")
     table.add_column("Domains", justify="right")
     table.add_column("Last Seen (UTC)")
 
-    for r in out[:limit] if limit else out:
+    if not out:
+        Console().print(table)
+        return
+
+    # render rows
+    for rowdata in (out[:limit] if limit else out):
         row = [
-            r["ip"],
-            str(r["msgs"]),
-            str(r["fails"]),
-            f"{r['fail_rate']:.1f}%"
+            rowdata["ip"],
+            str(rowdata["msgs"]),
+            str(rowdata["fails"]),
+            f"{rowdata['fail_rate']:.1f}%"
         ]
         if auth_breakdown:
+            # SHOW FAIL COUNTS (not passes)
             row += [
-                str(r["spf_fail"]),
-                str(r["dkim_fail"]),
-                str(r["both_fail"]),
-                str(r["dmarc_reject"]),
-                str(r["dmarc_quarantine"]),
-                str(r["dmarc_none"]),
+                str(rowdata["spf_fail"]),
+                str(rowdata["dkim_fail"]),
+                str(rowdata["both_fail"]),
+                str(rowdata["dmarc_reject"]),
+                str(rowdata["dmarc_quarantine"]),
+                str(rowdata["dmarc_none"]),
             ]
-        row += [str(r["domains"]), r["last_seen"] or "-"]
+        row += [str(rowdata["domains"]), rowdata["last_seen"] or "-"]
         table.add_row(*row)
 
     Console().print(table)

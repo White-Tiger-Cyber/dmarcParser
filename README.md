@@ -1,171 +1,137 @@
 # dmarcParser
 
-Interactive CLI + REPL to ingest and analyze **DMARC aggregate (RUA)** reports at scale.
+**Interactive CLI + REPL for ingesting and analyzing DMARC aggregate (RUA) reports.**  
+See exactly which IPs and senders *pass* or *fail* SPF/DKIM/DMARC, hunt impersonators, and fix deliverability.
 
-## What it does
+---
 
-- **Ingests** DMARC XML from files on disk (`.xml`, `.gz`, `.zip`) and de‑duplicates by XML hash
-- Stores data in a **per‑client SQLite DB** for incremental runs
-- Provides **threat‑hunting views** (summary, domains, source IPs, fail rates, alignment indicators)
-- Ships with an **interactive REPL** (history per client) and **direct CLI subcommands**
+## The story (real test case, anonymized)
 
-> **Current intended workflow**
->
-> You have a folder on a Linux filesystem that already contains **extracted DMARC XML files** (optionally with some `.gz`/`.zip` artifacts mixed in). Point `dP` at that folder to ingest and analyze. (Roadmap: ingesting individual archives from the command line is planned, but not finalized yet.)
+We built this tool to move beyond eyeballing XML. On our first real-world test, it immediately surfaced insights that would have been painful to see otherwise:
+
+- We could list **every source IP sending as the domain** and see which ones **failed DMARC** (and why).  
+- That spotlighted a **malicious actor** attempting to impersonate the domain from multiple IPs.  
+- It also revealed a set of **legitimate outbound systems** that were failing DMARC because their IPs weren’t covered by SPF.  
+- With those facts, we blocked the attacker and **updated SPF** to include the missing infrastructure, which **improved deliverability**.
+
+The value wasn’t “DMARC failed somewhere.” It was **“these exact IPs failed this way on these days,”** which turned guessing into action.
+
+---
+
+## Features
+
+- **Ingest** DMARC RUA reports from folders or files (`.xml`, `.gz`, `.zip`) with duplicate suppression
+- Store results in a **per‑client SQLite DB** for incremental analysis
+- **REPL shell** with history and quick commands (`summary`, `domains`, `ips`, `pct-timeline`)
+- **CLI subcommands** for automation and one‑liners
+- IP‑centric and domain‑centric views, with optional **SPF/DKIM/DMARC breakdown**
+- Lightweight, fast, and local—no external services
+
+---
+
+## Install
+
+Create a virtual environment, then install the package (editable installs work too):
+
+````bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install .
+````
+
+This exposes the console entrypoint **`dP`**.
+
+---
+
+## Quick start
+
+### Option A — jump straight into the REPL
+
+````bash
+dP
+````
+
+You’ll be prompted to pick (or create) a **client** database, e.g.:
+
+````text
+Available clients: AcmeCo, ExampleCorp
+Client to use (or new name) :
+````
+
+Then ingest and explore:
+
+````text
+dP>: ingest /path/to/rua/folder
+dP>: summary
+dP>: domains
+dP>: ips --auth
+dP>: pct-timeline --days 30
+````
+
+### Option B — one‑liners with the CLI
+
+You can also use subcommands directly (good for automation/CI):
+
+````bash
+# Ingest
+dP ingest /path/to/rua/folder --client ExampleCorp --rescan
+
+# High-level stats
+dP summary --client ExampleCorp --days 30
+
+# Domain aggregation
+dP domains --client ExampleCorp --days 30 --limit 50 --sort fail_rate --fail-only
+
+# IP aggregation (+ SPF/DKIM/DMARC breakdown columns)
+dP ips --client ExampleCorp --days 30 --auth --sort fails --limit 50
+
+# Daily fail% vs observed DMARC pct
+dP pct-timeline --client ExampleCorp --days 45
+````
+
+---
+
+## What the views tell you
+
+- **`summary`** – total messages, estimated fails, rough fail rate, distinct header_from domains, distinct source IPs, date range.
+- **`domains`** – aggregates by `header_from` with message count, failures, and fail‑rate; filter with `--fail-only`.
+- **`ips`** – aggregates by `source_ip` with messages, failures, fail%, unique domains seen, and last seen date.  
+  Add `--auth` to include columns for **SPF fail**, **DKIM fail**, **Both fail**, and **DMARC disposition** (reject/quarantine/none).
+- **`pct-timeline`** – per‑day message totals, estimated fail rate, and an **observed `pct`** (average with min–max across receivers). This helps verify policy rollouts like `p=quarantine; pct=10`.
+
+> **Failure definition (in views):** a message is counted as a DMARC failure if the receiver’s disposition is `reject`/`quarantine` **or** both SPF and DKIM are not `pass`. Counts and percentages are based on DMARC’s per‑record `count` field.
+
+---
+
+## Data model & storage
+
+- Each client’s data lives in **`~/.dmarcParser/clients/<client>.db`** (SQLite).  
+- A simple file memo (mtime/size) avoids re‑parsing unchanged files; use `--rescan` to force checks.  
+- Tables:
+  - `reports` – one row per feedback report (metadata, window start/end)
+  - `records` – expanded rows per DMARC record (`source_ip`, `header_from`, `spf_result`, `dkim_result`, `disposition`, `count`, `day`)
+  - `files_seen` / `ingest_sessions` – ingestion bookkeeping
+
+---
+
+## Typical workflows
+
+- **Hunt impersonators:** run `ips --auth` and filter/sort to find IPs with high fail counts; pivot to domains.  
+- **Fix deliverability:** use `domains` and `ips --auth` to find legitimate senders failing due to SPF gaps; update SPF and re‑ingest to verify.  
+- **Policy rollout validation:** `pct-timeline` shows if mailbox providers are honoring your `pct` as you dial from 0→100.
 
 ---
 
 ## Requirements
 
-- Python **3.9+** (`python3 --version`)
-- Linux/macOS (Windows works in WSL)
-- Recommended: `pipx` or a virtual environment
+- Python **3.9+**
+- Packages: `rich`, `tabulate` (installed via `pip install .`)
 
 ---
 
-## Installation
+## Contributing
 
-### Option A: Editable install (dev workflow)
-
-````bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-````
-
-### Option B: User install with `pipx`
-
-````bash
-pipx install .
-````
-
-This will expose the `dP` command on your `$PATH`.
-
----
-
-## Usage
-
-### 1) Prepare your input directory
-
-Place your DMARC aggregate reports in a directory, e.g.:
-
-````text
-/var/dmarc/acme/      # contains *.xml (and possibly *.gz / *.zip)
-/var/dmarc/acme/2024/  google.com!example.com!1719446400!1719532799.xml
-/var/dmarc/acme/2024/  yahoo.com!example.com!1717113600!1717199999.xml
-````
-
-> If you have compressed collections, you can still point at the **root**; `dP` will discover `.xml`, `.gz`, and `.zip` and only ingest valid XML content inside.
-
-### 2) Ingest into a per‑client database
-
-````bash
-# create or reuse a client DB called "AcmeCo" and ingest everything under /var/dmarc/acme
-dP ingest /var/dmarc/acme --client AcmeCo
-
-# Re-scan the same tree to pick up new files since last run
-dP ingest /var/dmarc/acme --client AcmeCo --rescan
-````
-
-Databases are stored under:
-
-````text
-~/.dmarcParser/clients/<CLIENT>.db
-````
-
-### 3) Explore the data (CLI)
-
-````bash
-# High-level summary (optionally limited to last N days)
-dP summary --client AcmeCo --days 30
-
-# Top domains by failures / fail rate
-dP domains --client AcmeCo --limit 25 --sort fail_rate --fail-only
-
-# Top failing source IPs (optionally limited to last N days)
-dP ips --client AcmeCo --limit 50 --days 14
-````
-
-### 4) Interactive REPL
-
-````bash
-# Launch shell and select or create a client
-dP
-````
-
-Inside the shell:
-
-````text
-help                # list commands
-clients             # show known client DBs
-client <name>       # switch/create client and set context
-ingest <path>       # ingest (uses current client)
-rescan [path]       # re-run ingest decisions on path/root
-summary [--days N]  # quick overview
-domains [...]       # aggregate by header_from
-ips [...]           # aggregate by source IP
-clear               # clear the screen
-exit / quit         # close shell
-````
-
-The REPL keeps arrow‑key history per client (~50 entries) under:
-
-````text
-~/.dmarcParser/history/<CLIENT>.history
-````
-
----
-
-## Examples
-
-````bash
-# First run
-dP ingest /srv/dmarc/acme --client AcmeCo
-
-# 30‑day pulse
-dP summary --client AcmeCo --days 30
-
-# Investigate failing senders
-dP ips --client AcmeCo --days 7 --limit 100
-````
-
----
-
-## Data model (high level)
-
-- **reports**: One row per DMARC aggregate report (metadata + policy)
-- **records**: Flattened rows per `<record>` with counts, auth results, source IP, `header_from`, etc.
-- **ingest_sessions / ingest_decisions**: Provenance and dedup decisions
-
-> Tables and indices are created automatically on first ingest.
-
----
-
-## Where to put sample files
-
-The repo includes sample DMARC XMLs under `samples_user/`. You can point the tool at that directory to see example output:
-
-````bash
-dP ingest ./samples_user --client SampleCo --rescan
-dP summary --client SampleCo
-````
-
----
-
-## Troubleshooting
-
-- **Command not found (`dP`)** → If you used a virtualenv, activate it first (`source .venv/bin/activate`). If using `pipx`, ensure `~/.local/bin` is on `PATH`.
-- **No new files ingested** → Use `--rescan` if you’ve added files in place since the last run.
-- **SQLite busy/locked** → Close other sessions using the same client DB and retry.
-- **XML ignored** → Only valid DMARC aggregate XML is ingested. Bad or non‑DMARC XML will be skipped.
-
----
-
-## Roadmap
-
-- Direct ingest of single archives from CLI (e.g., `--file my_report.zip`)
-- Export views to CSV/JSON
-- Web UI for drill‑downs
+Issues and PRs welcome. This project was built to be practical: small, fast, and focused on **actionable** visibility.
 
 ---
 

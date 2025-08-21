@@ -4,7 +4,7 @@ from rich.table import Table
 from rich.prompt import Confirm
 from . import ingest, views
 from .repl import run_shell
-from .views import pct_timeline_view
+from .views import pct_timeline_view, summary_view, domains_view, ips_view
 
 def _db_path_for(client_key):
     base = os.path.expanduser("~/.dmarcParser/clients")
@@ -36,22 +36,31 @@ def main(argv=None):
     dom.add_argument("--days", type=int, help="Restrict to last N days")
     dom.add_argument("--fail-only", action="store_true")
 
-    ips = sub.add_parser("ips", help="Aggregate by source IP")
-    ips.add_argument("--client", required=True, help="Client key")
-    ips.add_argument("--limit", type=int, default=50)
-    ips.add_argument("--days", type=int, help="Restrict to last N days")
-    ips.add_argument("--failed-only", action="store_true")
-    ips.add_argument("--min-fails", type=int, default=1)
-    ips.add_argument("--sort", choices=["fails","msgs","fail_rate"], default="fails")
-    ips.add_argument("--auth", action="store_true", help="Show SPF/DKIM/DMARC breakdown per IP")
+    ips = sub.add_parser(
+        "ips",
+        help="Aggregate by source IP (msgs, fails, fail%%, domains, last seen)",
+        description=(
+            "Lists IPs with message and failure counts. Use --auth to include SPF/DKIM breakdown and DMARC disposition counts."
+        ),
+    )
+    ips.add_argument("--client", required=True, help="Client key (database name)")
+    ips.add_argument("--days", type=int, help="Days to include (cutoff from latest report end_ts)")
+    ips.add_argument("--limit", type=int, default=50, help="Max rows (default: 50)")
+    ips.add_argument("--failed-only", action="store_true", help="Show only IPs with failures")
+    ips.add_argument("--min-fails", type=int, default=1, help="Minimum fail count to include (default: 1)")
+    ips.add_argument("--sort", choices=["fails", "msgs", "fail_rate"], default="fails", help="Sort key (default: fails)")
+    ips.add_argument("--auth", action="store_true", help="Add SPF≠pass, DKIM≠pass, Both≠pass, and DMARC disposition columns")
 
     pct = sub.add_parser(
         "pct-timeline",
         help="Daily msgs/fail%% vs observed DMARC pct",
-        description="Shows per-day totals with estimated fail rate and the observed DMARC pct reported by receivers (avg [min–max])."
+        description=(
+            "Shows per-day totals with estimated fail rate and the observed DMARC pct reported by receivers "
+            "(average with [min–max] since different receivers may honor different pct values on the same day)."
+        ),
     )
-    pct.add_argument("--client", required=True)
-    pct.add_argument("--days", type=int, default=30)
+    pct.add_argument("--client", required=True, help="Client key (database name)")
+    pct.add_argument("--days", type=int, default=30, help="How many days back to include (default: 30)")
 
     shell = sub.add_parser("shell", help="Interactive REPL (optionally ingest a path first)")
     # NOTE: --client is now OPTIONAL here
@@ -83,20 +92,22 @@ def main(argv=None):
         # ... unchanged ...
         return 0
 
-    elif cmd == "ips":
-        db = _db_path_for(args.client)  # or _db_path(args.client) in your codebase
-        ips_view(db,
-                 limit=args.limit,
-                 days=args.days,
-                 failed_only=args.failed_only,
-                 min_fails=args.min_fails,
-                 sort=args.sort,
-                 auth_breakdown=args.auth)
+    elif cmd == "pct-timeline":
+        db = _db_path(args.client)  # or _db_path_for(...) if that’s your helper
+        pct_timeline_view(db, days=args.days)
         return 0
 
-    elif cmd == "pct-timeline":
-        db = _db_path_for(args.client)
-        pct_timeline_view(db, days=args.days)
+    elif cmd == "ips":
+        db = _db_path(args.client)
+        ips_view(
+            db,
+            limit=args.limit,
+            days=args.days,
+            failed_only=args.failed_only,
+            min_fails=args.min_fails,
+            sort=args.sort,
+            auth_breakdown=args.auth,
+        )
         return 0
 
     elif cmd == "shell":
