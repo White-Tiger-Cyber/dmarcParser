@@ -72,6 +72,26 @@ dP>: pct-timeline --days 30
 
 You can also use subcommands directly (good for automation/CI):
 
+## Usage
+
+```bash
+dP [command] [options]
+
+Commands:
+  ingest              Ingest files from a path (default if first arg is a path)
+  summary             Show high-level summary from client DB
+  domains             Aggregate by header_from domain
+  ips                 Aggregate by source IP (msgs, fails, fail%, domains, last seen)
+  pct-timeline        Daily msgs/fail% vs observed DMARC pct
+  shell               Interactive REPL (optionally ingest a path first).
+                      Supports `--client` to start directly in a specific client DB.
+
+Options:
+  -h, --help          Show this help message and exit
+  --client CLIENT     Specify client name to use for the command,
+                      skipping the interactive client selection prompt.
+```
+
 ````bash
 # Ingest
 dP ingest /path/to/rua/folder --client ExampleCorp --rescan
