@@ -247,7 +247,7 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
                 limit = 50
                 days = None
                 failed_only = False
-                min_fails = 1
+                min_fails = 0
                 sort = "fails"
                 auth = False  # new: show SPF/DKIM/DMARC breakdown
 

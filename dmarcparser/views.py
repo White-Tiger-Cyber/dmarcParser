@@ -257,7 +257,7 @@ def domains_view(db_path, limit=25, sort="fail_rate", days=None, fail_only=False
 
     Console().print(table)
 
-def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=1, sort="fails", auth_breakdown=False):
+def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=0, sort="fails", auth_breakdown=False):
     """
     Aggregate by source_ip.
     Columns: IP, msgs, fails, fail%, unique header_from domains, last_seen (UTC date).
@@ -331,7 +331,7 @@ def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=1, sort=
         fails = a["fails"]
         if failed_only and fails == 0:
             continue
-        if fails < (min_fails or 1):
+        if min_fails and fails < min_fails:
             continue
         fail_rate = (fails / msgs * 100.0) if msgs else 0.0
 

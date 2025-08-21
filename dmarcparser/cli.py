@@ -46,8 +46,8 @@ def main(argv=None):
     ips.add_argument("--client", required=True, help="Client key (database name)")
     ips.add_argument("--days", type=int, help="Days to include (cutoff from latest report end_ts)")
     ips.add_argument("--limit", type=int, default=50, help="Max rows (default: 50)")
-    ips.add_argument("--failed-only", action="store_true", help="Show only IPs with failures")
-    ips.add_argument("--min-fails", type=int, default=1, help="Minimum fail count to include (default: 1)")
+    ips.add_argument("--failed-only", action="store_true", help="Only show IPs with failures")
+    ips.add_argument("--min-fails", type=int, default=0, help="Only show IPs with at least this many fails (default: 0)")
     ips.add_argument("--sort", choices=["fails", "msgs", "fail_rate"], default="fails", help="Sort key (default: fails)")
     ips.add_argument("--auth", action="store_true", help="Add SPF≠pass, DKIM≠pass, Both≠pass, and DMARC disposition columns")
 
@@ -90,12 +90,28 @@ def main(argv=None):
             console.print("\n[red]^C[/red] ingest interrupted")
             return 130
 
-    elif cmd in ("summary", "domains"):
+    elif cmd == "summary":
         try:
-            # ... unchanged ...
+            db = _db_path_for(args.client)
+            summary_view(db, days=args.days)
             return 0
         except KeyboardInterrupt:
-            console.print("\n[red]^C[/red] command interrupted")
+            console.print("\n[red]^C[/red] summary interrupted")
+            return 130
+
+    elif cmd == "domains":
+        try:
+            db = _db_path_for(args.client)
+            domains_view(
+                db,
+                limit=args.limit,
+                days=args.days,
+                fail_only=args.fail_only,   # note: flag name is --fail-only
+                sort=args.sort,
+            )
+            return 0
+        except KeyboardInterrupt:
+            console.print("\n[red]^C[/red] domains interrupted")
             return 130
 
     elif cmd == "pct-timeline":
