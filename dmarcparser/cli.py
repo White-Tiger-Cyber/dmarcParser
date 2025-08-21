@@ -85,36 +85,54 @@ def main(argv=None):
         args = ap.parse_args(argv); cmd = args.cmd
 
     if cmd == "ingest":
-        # ... unchanged ...
-        return 0
+        try:
+            # ... unchanged ...
+            return 0
+        except KeyboardInterrupt:
+            console.print("\n[red]^C[/red] ingest interrupted")
+            return 130
 
     elif cmd in ("summary", "domains"):
-        # ... unchanged ...
-        return 0
+        try:
+            # ... unchanged ...
+            return 0
+        except KeyboardInterrupt:
+            console.print("\n[red]^C[/red] command interrupted")
+            return 130
 
-    elif cmd == "pct-timeline":
-        db = _db_path(args.client)  # or _db_path_for(...) if that’s your helper
-        pct_timeline_view(db, days=args.days)
-        return 0
+        try:
+            db = _db_path(args.client)  # or _db_path_for(...) if that’s your helper
+            pct_timeline_view(db, days=args.days)
+            return 0
+        except KeyboardInterrupt:
+            console.print("\n[red]^C[/red] pct-timeline interrupted")
+            return 130
 
-    elif cmd == "ips":
-        db = _db_path(args.client)
-        ips_view(
-            db,
-            limit=args.limit,
-            days=args.days,
-            failed_only=args.failed_only,
-            min_fails=args.min_fails,
-            sort=args.sort,
-            auth_breakdown=args.auth,
-        )
-        return 0
+        try:
+            db = _db_path(args.client)
+            ips_view(
+                db,
+                limit=args.limit,
+                days=args.days,
+                failed_only=args.failed_only,
+                min_fails=args.min_fails,
+                sort=args.sort,
+                auth_breakdown=args.auth,
+            )
+            return 0
+        except KeyboardInterrupt:
+            console.print("\n[red]^C[/red] ips interrupted")
+            return 130
 
     elif cmd == "shell":
         # >>> FIX: do NOT precompute DB when args.client is None
         pending = (os.path.abspath(args.path), bool(args.rescan)) if args.path else None
-        run_shell(db_path=None, client_key=args.client, pending_ingest=pending)
-        return 0
+        try:
+            run_shell(db_path=None, client_key=args.client, pending_ingest=pending)
+            return 0
+        except KeyboardInterrupt:
+            console.print("\n[red]^C[/red] shell interrupted")
+            return 130
 
     else:
         ap.print_help(); return 1

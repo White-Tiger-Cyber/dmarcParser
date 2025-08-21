@@ -52,7 +52,11 @@ def _choose_client(console: Console):
         else:
             console.print("[yellow]No clients yet.[/yellow]")
 
-        raw = Prompt.ask("Client to use (or new name) [type 'list' to re-list]").strip()
+        try:
+            raw = Prompt.ask("Client to use (or new name) [type 'list' to re-list]").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[red]^C[/red] client selection cancelled")
+            return None
         if not raw:
             console.print("[red]Please enter a client name.[/red]")
             continue
@@ -109,6 +113,9 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
     # initial client selection loop
     while not db_path:
         client_key = _choose_client(console)
+        if client_key is None:
+            # user cancelled with ^C/^D
+            return
         resolved = _resolve_db_or_reprompt(console, client_key)
         if resolved:
             db_path = resolved
@@ -117,10 +124,14 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
 
     db_path = _db_path(client_key)
     if not os.path.exists(db_path):
-        if Confirm.ask(f"No DB for '{client_key}'. Create at {db_path}?", default=True):
-            open(db_path, "ab").close()
-        else:
-            console.print("[yellow]Aborted.[/yellow]")
+        try:
+            if Confirm.ask(f"No DB for '{client_key}'. Create at {db_path}?", default=True):
+                open(db_path, "ab").close()
+            else:
+                console.print("[yellow]Aborted.[/yellow]")
+                return
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[red]^C[/red] cancelled")
             return
 
     # optional one-shot ingest on entry (from CLI)
@@ -149,7 +160,7 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
             try:
                 line = Prompt.ask("dP>")
             except (EOFError, KeyboardInterrupt):
-                console.print("")
+                console.print("")  # newline for a clean prompt/exit
                 break
 
             if not line.strip():
