@@ -5,6 +5,7 @@ from rich.markup import escape
 from rich.table import Table
 from . import views, ingest
 from .views import pct_timeline_view, summary_view, domains_view, ips_view
+from .banner import dmarc_banner
 
 CLIENTS_DIR = os.path.expanduser("~/.dmarcParser/clients")
 HIST_DIR    = os.path.expanduser("~/.dmarcParser/history")
@@ -144,6 +145,7 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
     hist_file = _setup_history(client_key)
 
     def _print_banner():
+        dmarc_banner()
         console.print(f"[bold]dmarcParser[/bold] — client: [cyan]{client_key}[/cyan]  DB: {db_path}")
         console.print(
             "Commands: clients | client <name> | summary \\[--days N\\] | "

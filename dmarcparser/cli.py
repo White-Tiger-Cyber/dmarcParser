@@ -5,6 +5,7 @@ from rich.prompt import Confirm
 from . import ingest, views
 from .repl import run_shell
 from .views import pct_timeline_view, summary_view, domains_view, ips_view
+from .banner import dmarc_banner
 
 def _db_path_for(client_key):
     base = os.path.expanduser("~/.dmarcParser/clients")
