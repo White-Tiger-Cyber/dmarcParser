@@ -2,7 +2,7 @@ import os, argparse, sys
 from rich.console import Console
 from rich.table import Table
 from rich.prompt import Confirm
-from . import ingest, views
+from . import ingest, views, store
 from .repl import run_shell
 from .views import pct_timeline_view, summary_view, domains_view, ips_view
 from .banner import dmarc_banner
@@ -18,6 +18,12 @@ def main(argv=None):
 
     ap = argparse.ArgumentParser(prog="dP", description="DMARC Parser")
     sub = ap.add_subparsers(dest="cmd")
+
+    # Optional: create a client non-interactively
+    cc = sub.add_parser("client-create", help="Create a client DB with required domain")
+    cc.add_argument("name", help="Client key/name")
+    cc.add_argument("--domain", "-d", required=True, help="Client domain, e.g. reliableland.com")
+    cc.add_argument("--force", action="store_true", help="Overwrite existing empty DB file")
 
     ing = sub.add_parser("ingest", help="Ingest files from a path (default if first arg is a path)")
     ing.add_argument("path", help="File or directory to process")

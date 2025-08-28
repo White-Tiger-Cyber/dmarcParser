@@ -1,7 +1,12 @@
-
-import os, sqlite3, datetime, json
+import os, sqlite3, datetime, json, re
 
 DDL = """
+CREATE TABLE IF NOT EXISTS clients (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_name   TEXT NOT NULL UNIQUE,
+  client_domain TEXT NOT NULL UNIQUE,
+  created_at    TEXT NOT NULL DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 CREATE TABLE IF NOT EXISTS ingest_sessions (
   id INTEGER PRIMARY KEY,
   started_at TEXT NOT NULL,
@@ -16,12 +21,20 @@ CREATE TABLE IF NOT EXISTS ingest_decisions (
   detail TEXT
 );
 CREATE TABLE IF NOT EXISTS files_seen (
+  -- file_path is the unique key we use for “what we processed”.
+  -- For files inside ZIPs we use the virtual key "zip_path::inner_name"
   file_path TEXT PRIMARY KEY,
   size INTEGER NOT NULL,
   mtime REAL NOT NULL,
   sha256_xml TEXT,
   status TEXT NOT NULL,
-  last_ingested_at TEXT
+  last_ingested_at TEXT,
+  -- Stage 2 filename-derived metadata (nullable if unavailable)
+  origin_name TEXT,
+  name_provider TEXT,
+  name_domain TEXT,
+  name_begin_ts INTEGER,
+  name_end_ts INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_files_seen_sha ON files_seen(sha256_xml);
 
@@ -92,6 +105,54 @@ def upsert_seen(conn, file_path, size, mtime, sha256_xml, status):
                  """, (file_path,size,mtime,sha256_xml,status,now))
     conn.commit()
 
+# ---------- Stage 2 additions ----------
+def upsert_seen_ext(conn, *, file_path, size, mtime, sha256_xml, status,
+                    origin_name=None, name_provider=None, name_domain=None,
+                    name_begin_ts=None, name_end_ts=None):
+    """
+    Same as upsert_seen, with filename-derived metadata persisted for later analytics.
+    """
+    now = datetime.datetime.utcnow().isoformat()+"Z"
+    conn.execute("""
+        INSERT INTO files_seen(file_path,size,mtime,sha256_xml,status,last_ingested_at,
+                               origin_name,name_provider,name_domain,name_begin_ts,name_end_ts)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(file_path) DO UPDATE SET
+            size=excluded.size,
+            mtime=excluded.mtime,
+            sha256_xml=excluded.sha256_xml,
+            status=excluded.status,
+            last_ingested_at=excluded.last_ingested_at,
+            origin_name=COALESCE(excluded.origin_name, files_seen.origin_name),
+            name_provider=COALESCE(excluded.name_provider, files_seen.name_provider),
+            name_domain=COALESCE(excluded.name_domain, files_seen.name_domain),
+            name_begin_ts=COALESCE(excluded.name_begin_ts, files_seen.name_begin_ts),
+            name_end_ts=COALESCE(excluded.name_end_ts, files_seen.name_end_ts)
+    """, (file_path,size,mtime,sha256_xml,status,now,
+          origin_name,name_provider,name_domain,name_begin_ts,name_end_ts))
+    conn.commit()
+
+def providers_summary_for_client(conn, client_key):
+    """
+    Return list of dicts: [{'provider': 'yahoo.com', 'count': 42, 'latest_end_ts': 1752796799}, ...]
+    Only includes rows whose filename-domain matches the client's registered domain and status='parsed'.
+    """
+    cur = conn.execute("SELECT client_domain FROM clients WHERE client_name=?", (client_key,))
+    row = cur.fetchone()
+    if not row: return []
+    client_domain = row[0]
+    q = """
+        SELECT name_provider, COUNT(*) as cnt, MAX(name_end_ts) as latest_end
+        FROM files_seen
+        WHERE status='parsed' AND name_domain = ?
+        GROUP BY name_provider
+        ORDER BY cnt DESC, name_provider ASC
+    """
+    out = []
+    for prov, cnt, latest in conn.execute(q, (client_domain,)):
+        out.append({"provider": prov, "count": cnt or 0, "latest_end_ts": latest})
+    return out
+
 def ingest_report_summary(conn, session_id):
     cur = conn.execute("SELECT decision, COUNT(*) FROM ingest_decisions WHERE session_id=? GROUP BY decision", (session_id,))
     return dict(cur.fetchall())
@@ -121,3 +182,46 @@ def insert_records(conn, fp_report, end_ts, recs):
                       r.get("dkim_result"), json.dumps(r.get("dkim_results") or []),
                       r.get("disposition"), day))
     conn.commit()
+
+# ---------------------------
+# Stage 1: Client management
+# ---------------------------
+_DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)(?!-)(?!.*--)[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})+$"
+)
+
+def _validate_domain(domain: str) -> str:
+    """
+    Very small domain validator; returns the normalized (lowercased) domain.
+    Raises ValueError on bad input.
+    """
+    d = (domain or "").strip().lower().rstrip(".")
+    if not _DOMAIN_RE.match(d) or "." not in d:
+        raise ValueError(f"Invalid domain name: {domain!r}")
+    return d
+
+def create_client(conn, client_name: str, client_domain: str) -> int:
+    """
+    Create a client row. This is intended to be called by the CLI.
+    Enforces uniqueness of both client_name and client_domain.
+    """
+    client_name = (client_name or "").strip()
+    if not client_name:
+        raise ValueError("client_name is required")
+    client_domain = _validate_domain(client_domain)
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO clients (client_name, client_domain) VALUES (?, ?)",
+            (client_name, client_domain),
+        )
+        return cur.lastrowid
+
+def get_client_by_name(conn, client_name: str):
+    """
+    Return (id, client_name, client_domain, created_at) or None.
+    """
+    cur = conn.execute(
+        "SELECT id, client_name, client_domain, created_at FROM clients WHERE client_name = ?",
+        ((client_name or "").strip(),),
+    )
+    return cur.fetchone()
