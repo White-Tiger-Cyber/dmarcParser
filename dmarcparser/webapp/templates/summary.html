@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ client.client_name }} — Summary{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="mb-0">{{ client.client_name }} <span class="text-muted fs-6">/ summary</span></h4>
+  <form class="d-flex gap-2 align-items-center" method="get">
+    <label class="text-muted small">Days:</label>
+    <select name="days" class="form-select form-select-sm" style="width:100px;background:#21262d;color:#c9d1d9;border-color:#30363d" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for d in [7,14,30,60,90] %}
+      <option value="{{ d }}" {% if days == d %}selected{% endif %}>{{ d }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+<div class="row g-3 mb-4">
+  {% set stats = [
+    ("Reports",          data.reports,      ""),
+    ("Messages",         data.msgs,         ""),
+    ("Estimated Fails",  data.fails,        ""),
+    ("Fail Rate",        data.fail_rate|string + "%",  ""),
+    ("Unique Domains",   data.uniq_domains, ""),
+    ("Unique IPs",       data.uniq_ips,     ""),
+  ] %}
+  {% for label, value, _ in stats %}
+  <div class="col-6 col-md-4 col-xl-2">
+    <div class="card text-center stat-card h-100">
+      <div class="card-body py-3">
+        <div class="display-6 {% if label == 'Fail Rate' and data.fail_rate > 10 %}text-danger{% elif label == 'Fail Rate' and data.fail_rate > 0 %}text-warning{% endif %}">
+          {{ value }}
+        </div>
+        <div class="text-muted small mt-1">{{ label }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <div class="card-body text-muted small">
+    Date range: <strong class="text-light">{{ data.date_start or '—' }}</strong>
+    → <strong class="text-light">{{ data.date_end or '—' }}</strong>
+    {% if days %}<span class="ms-2">(last {{ days }} days)</span>{% endif %}
+  </div>
+</div>
+
+<div class="mt-3 d-flex gap-2">
+  <a href="/client/{{ client.client_name }}/domains"      class="btn btn-sm btn-outline-secondary">→ Domains</a>
+  <a href="/client/{{ client.client_name }}/ips"          class="btn btn-sm btn-outline-secondary">→ IPs</a>
+  <a href="/client/{{ client.client_name }}/pct-timeline" class="btn btn-sm btn-outline-secondary">→ PCT Timeline</a>
+</div>
+{% endblock %}

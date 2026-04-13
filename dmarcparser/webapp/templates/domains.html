@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}{{ client.client_name }} — Domains{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ client.client_name }} <span class="text-muted fs-6">/ domains</span></h4>
+  <form class="d-flex gap-2 align-items-center flex-wrap" method="get">
+    <label class="text-muted small">Days:</label>
+    <select name="days" class="form-select form-select-sm" style="width:90px;background:#21262d;color:#c9d1d9;border-color:#30363d">
+      <option value="">All</option>
+      {% for d in [7,14,30,60,90] %}<option value="{{ d }}" {% if days == d %}selected{% endif %}>{{ d }}</option>{% endfor %}
+    </select>
+    <label class="text-muted small">Sort:</label>
+    <select name="sort" class="form-select form-select-sm" style="width:120px;background:#21262d;color:#c9d1d9;border-color:#30363d">
+      {% for s in ["fail_rate","fails","msgs"] %}<option value="{{ s }}" {% if sort == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select>
+    <label class="text-muted small">Limit:</label>
+    <select name="limit" class="form-select form-select-sm" style="width:80px;background:#21262d;color:#c9d1d9;border-color:#30363d">
+      {% for l in [25,50,100,0] %}<option value="{{ l }}" {% if limit == l %}selected{% endif %}>{% if l == 0 %}All{% else %}{{ l }}{% endif %}</option>{% endfor %}
+    </select>
+    <div class="form-check form-switch mb-0">
+      <input class="form-check-input" type="checkbox" name="fail_only" value="1" id="failOnly" {% if fail_only %}checked{% endif %}>
+      <label class="form-check-label text-muted small" for="failOnly">Fails only</label>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary" type="submit">Apply</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0" data-sort-table>
+      <thead>
+        <tr>
+          <th class="sortable ps-3">Domain</th>
+          <th class="sortable text-end">Msgs</th>
+          <th class="sortable text-end">Fails</th>
+          <th class="sortable text-end">Fail%</th>
+          <th class="sortable text-end">Aligned%</th>
+          <th class="sortable text-end pe-3">IPs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="ps-3">{{ r.domain }}</td>
+          <td class="text-end">{{ r.msgs }}</td>
+          <td class="text-end">{{ r.fails }}</td>
+          <td class="text-end">
+            <span class="badge {% if r.fail_rate > 10 %}badge-fail{% elif r.fail_rate > 0 %}bg-warning text-dark{% else %}badge-ok{% endif %}">
+              {{ r.fail_rate }}%
+            </span>
+          </td>
+          <td class="text-end">{{ r.aligned_rate }}%</td>
+          <td class="text-end pe-3">{{ r.ips }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted py-4">No data</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

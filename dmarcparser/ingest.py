@@ -1,4 +1,4 @@
-import os, io, gzip, zipfile, hashlib, re, json
+import os, io, gzip, zipfile, hashlib, re, json, tempfile, shutil
 from . import store
 from .xmlparse import parse_rua_xml
 
@@ -290,3 +290,24 @@ def ingest(root_path, client_db_path, client_key, rescan=False, dry_run=False, l
 
     summary = store.ingest_report_summary(conn, session_id)
     return {"session_id": session_id, "summary": summary}
+
+
+def ingest_bytes(data: bytes, filename: str, db_path: str, client_key: str) -> dict:
+    """
+    Write `data` to a temporary directory under the original `filename` and
+    run the existing ingest pipeline against it.
+
+    Using the original filename preserves DMARC filename-metadata parsing
+    (provider!domain!begin!end.zip/gz/xml pattern).
+
+    Returns the ingest summary dict: {parsed: N, dup_xml: N, ...}
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="dmarcparser_")
+    try:
+        tmp_path = os.path.join(tmp_dir, filename)
+        with open(tmp_path, "wb") as f:
+            f.write(data)
+        result = ingest(tmp_path, db_path, client_key)
+        return result.get("summary", result)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

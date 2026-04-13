@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}dmarcParser{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background: #0d1117; color: #c9d1d9; }
+    .navbar { background: #161b22 !important; border-bottom: 1px solid #30363d; }
+    .navbar-brand { color: #58a6ff !important; font-weight: 700; letter-spacing: .5px; }
+    .nav-link { color: #8b949e !important; }
+    .nav-link:hover, .nav-link.active { color: #c9d1d9 !important; }
+    .card { background: #161b22; border: 1px solid #30363d; }
+    .card-header { background: #21262d; border-bottom: 1px solid #30363d; }
+    table { font-size: .875rem; }
+    .table { color: #c9d1d9; }
+    .table thead th { background: #21262d; border-color: #30363d; color: #8b949e; font-weight: 600; }
+    .table td, .table th { border-color: #21262d; }
+    .table-hover tbody tr:hover { background: #21262d; }
+    .badge-fail { background: #da3633; }
+    .badge-ok   { background: #238636; }
+    .text-muted { color: #8b949e !important; }
+    .sortable { cursor: pointer; user-select: none; }
+    .sortable:hover { color: #58a6ff; }
+    a { color: #58a6ff; }
+    a:hover { color: #79c0ff; }
+    .stat-card .display-6 { color: #58a6ff; }
+    .dropdown-menu { background: #161b22; border: 1px solid #30363d; }
+    .dropdown-item { color: #c9d1d9; }
+    .dropdown-item:hover { background: #21262d; color: #fff; }
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="/">&#x1F50E; dmarcParser</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navMenu">
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item"><a class="nav-link" href="/">Clients</a></li>
+        {% if nav_clients %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Reports</a>
+          <ul class="dropdown-menu">
+            {% for c in nav_clients %}
+            <li><span class="dropdown-item text-muted small">{{ c.client_name }}</span></li>
+            <li><a class="dropdown-item ps-4" href="/client/{{ c.client_name }}/summary">Summary</a></li>
+            <li><a class="dropdown-item ps-4" href="/client/{{ c.client_name }}/domains">Domains</a></li>
+            <li><a class="dropdown-item ps-4" href="/client/{{ c.client_name }}/ips">IPs</a></li>
+            <li><a class="dropdown-item ps-4" href="/client/{{ c.client_name }}/pct-timeline">PCT Timeline</a></li>
+            {% if not loop.last %}<li><hr class="dropdown-divider" style="border-color:#30363d"></li>{% endif %}
+            {% endfor %}
+          </ul>
+        </li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid py-4">
+  {% block content %}{% endblock %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Simple client-side column sort for any table with data-sort-table
+document.querySelectorAll('[data-sort-table]').forEach(function(table) {
+  table.querySelectorAll('th.sortable').forEach(function(th, colIdx) {
+    th.addEventListener('click', function() {
+      var tbody = table.querySelector('tbody');
+      var rows = Array.from(tbody.querySelectorAll('tr'));
+      var asc = th.dataset.sortDir !== 'asc';
+      table.querySelectorAll('th.sortable').forEach(function(h) { delete h.dataset.sortDir; h.textContent = h.textContent.replace(/ [▲▼]$/, ''); });
+      th.dataset.sortDir = asc ? 'asc' : 'desc';
+      th.textContent = th.textContent + (asc ? ' ▲' : ' ▼');
+      rows.sort(function(a, b) {
+        var av = a.cells[colIdx].textContent.trim().replace(/[%,]/g, '');
+        var bv = b.cells[colIdx].textContent.trim().replace(/[%,]/g, '');
+        var an = parseFloat(av), bn = parseFloat(bv);
+        if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
+        return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+      rows.forEach(function(r) { tbody.appendChild(r); });
+    });
+  });
+});
+</script>
+</body>
+</html>

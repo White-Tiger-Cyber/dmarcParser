@@ -1,4 +1,4 @@
-import os, sqlite3, datetime, json, re
+import os, sqlite3, datetime, json, re, time
 
 DDL = """
 CREATE TABLE IF NOT EXISTS clients (
@@ -225,3 +225,101 @@ def get_client_by_name(conn, client_name: str):
         ((client_name or "").strip(),),
     )
     return cur.fetchone()
+
+
+# ---------------------------------------------------------------------------
+# Shared index DB  (~/.dmarcParser/index.db)
+# Tracks all clients centrally + email processing audit log.
+# ---------------------------------------------------------------------------
+
+_INDEX_DDL = """
+CREATE TABLE IF NOT EXISTS clients (
+    client_name TEXT PRIMARY KEY,
+    domain      TEXT NOT NULL UNIQUE,
+    db_path     TEXT NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS processed_emails (
+    message_id   TEXT PRIMARY KEY,
+    processed_at INTEGER NOT NULL,
+    client_name  TEXT,
+    status       TEXT NOT NULL,
+    notes        TEXT
+);
+"""
+
+_INDEX_DB_PATH = os.path.expanduser("~/.dmarcParser/index.db")
+
+
+def open_index_db(path=None):
+    """Open (or create) the shared index DB.  Returns a sqlite3 connection."""
+    path = path or _INDEX_DB_PATH
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.executescript(_INDEX_DDL)
+    conn.commit()
+    return conn
+
+
+def ensure_client_for_domain(index_db_path, policy_domain: str):
+    """
+    Find or auto-create a client for `policy_domain`.
+
+    Returns a dict:
+        {client_name, db_path, is_new}
+
+    If the domain is not yet registered:
+    1.  client_name  = policy_domain  (e.g. "whitetigercyber.com")
+    2.  db_path      = ~/.dmarcParser/clients/<domain>.db
+    3.  Creates the per-client SQLite DB and registers the client inside it
+    4.  Registers the mapping in index.db
+    """
+    domain = _validate_domain(policy_domain)
+    idx = open_index_db(index_db_path)
+
+    row = idx.execute(
+        "SELECT client_name, db_path FROM clients WHERE domain=?", (domain,)
+    ).fetchone()
+
+    if row:
+        idx.close()
+        return {"client_name": row[0], "db_path": row[1], "is_new": False}
+
+    # Auto-create
+    client_name = domain
+    clients_dir = os.path.expanduser("~/.dmarcParser/clients")
+    db_path = os.path.join(clients_dir, f"{client_name}.db")
+
+    # Create per-client DB and register client row inside it
+    client_conn = open_db(db_path)
+    try:
+        create_client(client_conn, client_name, domain)
+    except Exception:
+        pass  # May already exist (e.g., race or retry)
+    client_conn.close()
+
+    # Register in index
+    idx.execute(
+        "INSERT OR IGNORE INTO clients(client_name, domain, db_path, created_at) VALUES (?,?,?,?)",
+        (client_name, domain, db_path, int(time.time())),
+    )
+    idx.commit()
+    idx.close()
+
+    return {"client_name": client_name, "db_path": db_path, "is_new": True}
+
+
+def list_all_clients_from_index(index_db_path=None):
+    """
+    Return list of dicts: [{client_name, domain, db_path, created_at}, ...]
+    from the shared index DB.
+    """
+    idx = open_index_db(index_db_path or _INDEX_DB_PATH)
+    rows = idx.execute(
+        "SELECT client_name, domain, db_path, created_at FROM clients ORDER BY client_name"
+    ).fetchall()
+    idx.close()
+    return [
+        {"client_name": r[0], "domain": r[1], "db_path": r[2], "created_at": r[3]}
+        for r in rows
+    ]

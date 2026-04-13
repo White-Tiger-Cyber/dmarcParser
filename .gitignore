@@ -17,3 +17,14 @@ venv/
 
 # Local data state
 .dmarcParser/
+
+# Throwaway scripts
+test_gmail_auth.py
+debug_attachments.py
+
+# Environment / secrets
+.env
+
+# GCP credentials — never commit service account keys
+*.json
+credentials/

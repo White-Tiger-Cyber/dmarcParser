@@ -6,6 +6,7 @@ from . import ingest, views, store
 from .repl import run_shell
 from .views import pct_timeline_view, summary_view, domains_view, ips_view
 from .banner import dmarc_banner
+from .config import load_config
 
 def _db_path_for(client_key):
     base = os.path.expanduser("~/.dmarcParser/clients")
@@ -70,11 +71,27 @@ def main(argv=None):
     pct.add_argument("--days", type=int, default=30, help="How many days back to include (default: 30)")
 
     shell = sub.add_parser("shell", help="Interactive REPL (choose client or skip chooser with --client)")
-    # If provided, --client will open the REPL directly on that client; otherwise you'll get the chooser.
     shell.add_argument("--client", help="Client key (skip chooser if provided)")
 
+    # ----- agent -----
+    ag = sub.add_parser("agent", help="Monitor DMARC inbox and ingest reports via Claude agent")
+    ag.add_argument("--interval", type=int, default=15,
+                    help="Poll interval in minutes (default: 15); ignored with --once")
+    ag.add_argument("--once", action="store_true",
+                    help="Process current inbox contents and exit (do not loop)")
+    ag.add_argument("--dry-run", action="store_true",
+                    help="Identify reports but do not ingest or label emails")
+    ag.add_argument("--verbosity", choices=["quiet", "structured", "full"],
+                    default="structured",
+                    help="Output level: quiet | structured (default) | full")
+
+    # ----- serve -----
+    sv = sub.add_parser("serve", help="Start local Flask dashboard at http://localhost:PORT")
+    sv.add_argument("--port", type=int, default=5000, help="Port (default: 5000)")
+    sv.add_argument("--client", help="Limit dashboard to one client (default: all)")
+
     # --- dispatch (prefer known subcommands over "path means ingest") ---
-    KNOWN = {"ingest", "summary", "domains", "ips", "pct-timeline", "shell"}
+    KNOWN = {"ingest", "summary", "domains", "ips", "pct-timeline", "shell", "agent", "serve"}
     if not argv:
         # No args -> open interactive shell with chooser
         run_shell(db_path=None, client_key=None, pending_ingest=None)
@@ -155,6 +172,72 @@ def main(argv=None):
             return 0
         except KeyboardInterrupt:
             console.print("\n[red]^C[/red] shell interrupted")
+            return 130
+
+    elif cmd == "agent":
+        try:
+            from . import gmail_client as gc
+            from . import agent as ag_mod
+            cfg = load_config()
+            svc = gc.build_service(
+                delegated_user=cfg["gmail"]["delegated_user"]
+            )
+            idx = cfg["paths"]["index_db"]
+            if args.once:
+                console.print("[cyan]Draining inbox...[/cyan]")
+                totals = {"ingested": 0, "skipped": 0, "errors": 0}
+                batch = 0
+                while True:
+                    remaining = gc.list_unprocessed_messages(svc)
+                    if not remaining:
+                        break
+                    batch += 1
+                    console.print(f"[dim]Batch {batch} — {len(remaining)} message(s)[/dim]")
+                    summary = ag_mod.run_agent_once(
+                        svc,
+                        index_db_path=idx,
+                        dry_run=args.dry_run,
+                        verbosity=args.verbosity,
+                    )
+                    totals["ingested"] += summary["ingested"]
+                    totals["skipped"]  += summary["skipped"]
+                    totals["errors"]   += summary["errors"]
+                console.print(
+                    f"[green]Done.[/green]  "
+                    f"ingested={totals['ingested']}  "
+                    f"skipped={totals['skipped']}  "
+                    f"errors={totals['errors']}  "
+                    f"({batch} batch{'es' if batch != 1 else ''})"
+                )
+            else:
+                ag_mod.run_agent_loop(
+                    svc,
+                    index_db_path=idx,
+                    interval=args.interval,
+                    dry_run=args.dry_run,
+                    verbosity=args.verbosity,
+                )
+            return 0
+        except KeyboardInterrupt:
+            console.print("\n[red]^C[/red] agent interrupted")
+            return 130
+
+    elif cmd == "serve":
+        try:
+            import webbrowser
+            from .webapp.app import create_app
+            cfg = load_config()
+            app = create_app(
+                index_db_path=cfg["paths"]["index_db"],
+                filter_client=args.client,
+            )
+            url = f"http://localhost:{args.port}"
+            console.print(f"[cyan]Starting dashboard at {url}[/cyan]")
+            webbrowser.open(url)
+            app.run(host="127.0.0.1", port=args.port, debug=False)
+            return 0
+        except KeyboardInterrupt:
+            console.print("\n[red]^C[/red] serve interrupted")
             return 130
 
     else:

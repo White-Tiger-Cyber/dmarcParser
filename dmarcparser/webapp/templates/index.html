@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}dmarcParser — Clients{% endblock %}
+{% block content %}
+<h4 class="mb-4">Clients</h4>
+{% if not summaries %}
+  <div class="alert" style="background:#21262d;border:1px solid #30363d;color:#8b949e;">
+    No clients found. Run <code>dP agent</code> to ingest reports and auto-create clients.
+  </div>
+{% else %}
+<div class="row g-3">
+  {% for s in summaries %}
+  <div class="col-md-6 col-xl-4">
+    <div class="card h-100 stat-card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-bold">{{ s.client_name }}</span>
+        <span class="text-muted small">{{ s.domain }}</span>
+      </div>
+      <div class="card-body">
+        <div class="row text-center mb-3">
+          <div class="col-4">
+            <div class="display-6">{{ s.msgs }}</div>
+            <div class="text-muted small">Messages</div>
+          </div>
+          <div class="col-4">
+            <div class="display-6" style="color:{% if s.fail_rate > 10 %}#da3633{% elif s.fail_rate > 0 %}#e3b341{% else %}#238636{% endif %}">
+              {{ s.fail_rate }}%
+            </div>
+            <div class="text-muted small">Fail Rate</div>
+          </div>
+          <div class="col-4">
+            <div class="display-6">{{ s.reports }}</div>
+            <div class="text-muted small">Reports</div>
+          </div>
+        </div>
+        <ul class="list-unstyled text-muted small mb-3">
+          <li>Unique IPs: <strong class="text-light">{{ s.uniq_ips }}</strong></li>
+          <li>Unique Domains: <strong class="text-light">{{ s.uniq_domains }}</strong></li>
+          <li>Date range: <strong class="text-light">{{ s.date_start or '—' }} → {{ s.date_end or '—' }}</strong></li>
+        </ul>
+        <div class="d-flex gap-2 flex-wrap">
+          <a href="/client/{{ s.client_name }}/summary"      class="btn btn-sm btn-outline-secondary">Summary</a>
+          <a href="/client/{{ s.client_name }}/domains"      class="btn btn-sm btn-outline-secondary">Domains</a>
+          <a href="/client/{{ s.client_name }}/ips"          class="btn btn-sm btn-outline-secondary">IPs</a>
+          <a href="/client/{{ s.client_name }}/pct-timeline" class="btn btn-sm btn-outline-secondary">PCT Timeline</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}
