@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS records (
 CREATE INDEX IF NOT EXISTS idx_records_domain ON records(header_from);
 CREATE INDEX IF NOT EXISTS idx_records_ip ON records(source_ip);
 CREATE INDEX IF NOT EXISTS idx_records_day ON records(day);
+CREATE INDEX IF NOT EXISTS idx_records_fp ON records(fp_report);
 """
 
 def open_db(path):
