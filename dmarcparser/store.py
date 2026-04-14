@@ -323,3 +323,27 @@ def list_all_clients_from_index(index_db_path=None):
         {"client_name": r[0], "domain": r[1], "db_path": r[2], "created_at": r[3]}
         for r in rows
     ]
+
+
+def delete_client(index_db_path, client_name):
+    """
+    Remove a client from the index and delete their per-client DB file.
+    Returns the db_path that was deleted (or None if client not found).
+    """
+    idx = open_index_db(index_db_path or _INDEX_DB_PATH)
+    row = idx.execute(
+        "SELECT db_path FROM clients WHERE client_name = ?", (client_name,)
+    ).fetchone()
+    if not row:
+        idx.close()
+        return None
+    db_path = row[0]
+    idx.execute("DELETE FROM clients WHERE client_name = ?", (client_name,))
+    idx.commit()
+    idx.close()
+    try:
+        if db_path and os.path.exists(db_path):
+            os.remove(db_path)
+    except OSError:
+        pass
+    return db_path

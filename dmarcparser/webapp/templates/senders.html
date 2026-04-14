@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}{{ client.client_name }} — Domains{% endblock %}
+{% block title %}{{ client.client_name }} — Senders{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">{{ client.client_name }} <span class="text-muted fs-6">/ domains</span></h4>
+  <h4 class="mb-0">{{ client.client_name }} <span class="text-muted fs-6">/ senders</span></h4>
   <form class="d-flex gap-2 align-items-center flex-wrap" method="get">
     <label class="text-muted small">Days:</label>
     <select name="days" class="form-select form-select-sm" style="width:90px;background:#21262d;color:#c9d1d9;border-color:#30363d">
@@ -11,7 +11,7 @@
     </select>
     <label class="text-muted small">Sort:</label>
     <select name="sort" class="form-select form-select-sm" style="width:120px;background:#21262d;color:#c9d1d9;border-color:#30363d">
-      {% for s in ["fail_rate","fails","msgs"] %}<option value="{{ s }}" {% if sort == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      {% for s in ["fails","msgs","fail_rate","forwarded"] %}<option value="{{ s }}" {% if sort == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
     </select>
     <label class="text-muted small">Limit:</label>
     <select name="limit" class="form-select form-select-sm" style="width:80px;background:#21262d;color:#c9d1d9;border-color:#30363d">
@@ -30,18 +30,22 @@
     <table class="table table-hover table-sm mb-0" data-sort-table>
       <thead>
         <tr>
-          <th class="sortable ps-3">Domain</th>
+          <th class="sortable ps-3">Sending Domain</th>
           <th class="sortable text-end">Msgs</th>
           <th class="sortable text-end">Fails</th>
           <th class="sortable text-end">Fail%</th>
-          <th class="sortable text-end">Aligned%</th>
-          <th class="sortable text-end pe-3">IPs</th>
+          <th class="sortable text-end" title="SPF fail + DKIM pass — likely email forwarding">Forwarded</th>
+          <th class="sortable text-end">Fwd%</th>
+          <th class="sortable text-end">IPs</th>
+          <th class="sortable text-end pe-3">Last Seen</th>
         </tr>
       </thead>
       <tbody>
         {% for r in rows %}
         <tr>
-          <td class="ps-3">{{ r.domain }}</td>
+          <td class="ps-3">
+            <a href="/client/{{ client.client_name }}/sender/{{ r.domain }}" class="text-decoration-none">{{ r.domain }}</a>
+          </td>
           <td class="text-end">{{ r.msgs }}</td>
           <td class="text-end">{{ r.fails }}</td>
           <td class="text-end">
@@ -49,11 +53,19 @@
               {{ r.fail_rate }}%
             </span>
           </td>
-          <td class="text-end">{{ r.aligned_rate }}%</td>
-          <td class="text-end pe-3">{{ r.ips }}</td>
+          <td class="text-end">{{ r.forwarded }}</td>
+          <td class="text-end">
+            {% if r.fwd_rate > 0 %}
+            <span class="badge bg-warning text-dark">{{ r.fwd_rate }}%</span>
+            {% else %}
+            <span class="text-muted">0%</span>
+            {% endif %}
+          </td>
+          <td class="text-end">{{ r.ips }}</td>
+          <td class="text-end pe-3 text-muted">{{ r.last_seen or '-' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="6" class="text-center text-muted py-4">No data</td></tr>
+        <tr><td colspan="8" class="text-center text-muted py-4">No data</td></tr>
         {% endfor %}
       </tbody>
     </table>

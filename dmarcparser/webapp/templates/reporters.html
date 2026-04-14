@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ client.client_name }} — Reporters{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ client.client_name }} <span class="text-muted fs-6">/ reporters</span></h4>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0" data-sort-table>
+      <thead>
+        <tr>
+          <th class="sortable ps-3">Reporter</th>
+          <th class="sortable text-end">Reports</th>
+          <th class="sortable text-end">Messages</th>
+          <th class="sortable text-end">First Seen</th>
+          <th class="sortable text-end pe-3">Last Seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="ps-3">
+            <a href="/client/{{ client.client_name }}/reporter/{{ r.reporter }}" class="text-decoration-none">
+              {{ r.reporter }}
+            </a>
+          </td>
+          <td class="text-end">{{ r.reports }}</td>
+          <td class="text-end">{{ r.messages }}</td>
+          <td class="text-end text-muted">{{ r.first_seen or '-' }}</td>
+          <td class="text-end pe-3 text-muted">{{ r.last_seen or '-' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-4">No data</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

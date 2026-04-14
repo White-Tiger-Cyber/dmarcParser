@@ -4,7 +4,7 @@ from rich.prompt import Prompt, Confirm
 from rich.markup import escape
 from rich.table import Table
 from . import views, ingest, store
-from .views import pct_timeline_view, summary_view, domains_view, ips_view
+from .views import pct_timeline_view, summary_view, senders_view, reporters_view, ips_view
 from .banner import dmarc_banner
 
 CLIENTS_DIR = os.path.expanduser("~/.dmarcParser/clients")
@@ -149,7 +149,8 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
         console.print(f"[bold]dmarcParser[/bold] — client: [cyan]{client_key}[/cyan]  DB: {db_path}")
         console.print(
              "Commands: clients | client <name> | summary \\[--days N\\] | "
-             "domains \\[--limit N\\] \\[--sort msgs|fails|fail_rate\\] \\[--days N\\] \\[--fail-only\\] | "
+             "senders \\[--limit N\\] \\[--sort fails|msgs|fail_rate|forwarded\\] \\[--days N\\] \\[--fail-only\\] | "
+             "reporters | "
              "ips \\[--failed-only\\] \\[--min-fails N\\] \\[--days N\\] \\[--limit N\\] \\[--sort fails|msgs|fail_rate\\] \\[--auth\\] | "
              "providers \\[--all\\] \\[--debug\\] | pct-timeline \\[--days N\\] | ingest <path> \\[--rescan\\] | rescan \\[--path DIR\\] \\[--dry-run\\] | "
              "paths | clear | help | exit"       )
@@ -187,8 +188,9 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
                 console.print("[bold]rescan[/bold] [--path DIR] [--dry-run] – re-evaluate ingest decisions on a path")
                 console.print("[bold]summary[/bold] [--days N] – totals, distincts, fail%%, and date range (window-aware)")
                 # for lines with bracketed options: bold label + plain options
-                console.print("[bold]domains[/bold] ", end="")
-                console.print("[--days N] [--limit N] [--sort msgs|fails|fail_rate] [--fail-only] — aggregate by header_from", markup=False)
+                console.print("[bold]senders[/bold] ", end="")
+                console.print("[--days N] [--limit N] [--sort fails|msgs|fail_rate|forwarded] [--fail-only] — aggregate by SPF sending domain", markup=False)
+                console.print("[bold]reporters[/bold] — list reporting organizations (mailbox providers)", markup=False)
 
                 console.print("[bold]providers[/bold] ", end="")
                 console.print("[--all] [--debug] — count of reports per ISP/provider (from filename). Default filters to this client’s domain; --all ignores the domain filter.", markup=False)
@@ -258,15 +260,18 @@ def run_shell(db_path=None, client_key=None, pending_ingest=None):
                         continue
                 views.summary_view(db_path, days=days)
 
-            elif cmd == "domains":
-                limit = 25; sort = "fail_rate"; days = None; fail_only = False
+            elif cmd == "senders":
+                limit = 50; sort = "fails"; days = None; fail_only = False
                 it = iter(parts[1:])
                 for tok in it:
-                    if tok == "--limit":   limit = int(next(it))
-                    elif tok == "--sort":  sort  = next(it)
-                    elif tok == "--days":  days  = int(next(it))
+                    if tok == "--limit":      limit = int(next(it))
+                    elif tok == "--sort":     sort  = next(it)
+                    elif tok == "--days":     days  = int(next(it))
                     elif tok == "--fail-only": fail_only = True
-                views.domains_view(db_path, limit=limit, sort=sort, days=days, fail_only=fail_only)
+                views.senders_view(db_path, limit=limit, sort=sort, days=days, fail_only=fail_only)
+
+            elif cmd == "reporters":
+                views.reporters_view(db_path)
 
             elif cmd == "ips":
                 # defaults

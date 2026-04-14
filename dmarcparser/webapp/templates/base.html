@@ -48,7 +48,8 @@
             {% for c in nav_clients %}
             <li><span class="dropdown-item text-muted small">{{ c.client_name }}</span></li>
             <li><a class="dropdown-item ps-4" href="/client/{{ c.client_name }}/summary">Summary</a></li>
-            <li><a class="dropdown-item ps-4" href="/client/{{ c.client_name }}/domains">Domains</a></li>
+            <li><a class="dropdown-item ps-4" href="/client/{{ c.client_name }}/senders">Senders</a></li>
+            <li><a class="dropdown-item ps-4" href="/client/{{ c.client_name }}/reporters">Reporters</a></li>
             <li><a class="dropdown-item ps-4" href="/client/{{ c.client_name }}/ips">IPs</a></li>
             <li><a class="dropdown-item ps-4" href="/client/{{ c.client_name }}/pct-timeline">PCT Timeline</a></li>
             {% if not loop.last %}<li><hr class="dropdown-divider" style="border-color:#30363d"></li>{% endif %}

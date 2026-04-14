@@ -4,7 +4,7 @@ from rich.table import Table
 from rich.prompt import Confirm
 from . import ingest, views, store
 from .repl import run_shell
-from .views import pct_timeline_view, summary_view, domains_view, ips_view
+from .views import pct_timeline_view, summary_view, ips_view, senders_view, reporters_view
 from .banner import dmarc_banner
 from .config import load_config
 
@@ -37,12 +37,15 @@ def main(argv=None):
     summ.add_argument("--client", required=True, help="Client key")
     summ.add_argument("--days", type=int, help="Restrict to last N days")
 
-    dom = sub.add_parser("domains", help="Aggregate by header_from domain")
-    dom.add_argument("--client", required=True, help="Client key")
-    dom.add_argument("--limit", type=int, default=25)
-    dom.add_argument("--sort", choices=["fail_rate","fails","msgs"], default="fail_rate")
-    dom.add_argument("--days", type=int, help="Restrict to last N days")
-    dom.add_argument("--fail-only", action="store_true")
+    snd = sub.add_parser("senders", help="Aggregate by SPF sending domain")
+    snd.add_argument("--client", required=True, help="Client key")
+    snd.add_argument("--limit", type=int, default=50)
+    snd.add_argument("--sort", choices=["fails","msgs","fail_rate","forwarded"], default="fails")
+    snd.add_argument("--days", type=int, help="Restrict to last N days")
+    snd.add_argument("--fail-only", action="store_true")
+
+    rep = sub.add_parser("reporters", help="Aggregate by reporting organization")
+    rep.add_argument("--client", required=True, help="Client key")
 
     ips = sub.add_parser(
         "ips",
@@ -91,7 +94,7 @@ def main(argv=None):
     sv.add_argument("--client", help="Limit dashboard to one client (default: all)")
 
     # --- dispatch (prefer known subcommands over "path means ingest") ---
-    KNOWN = {"ingest", "summary", "domains", "ips", "pct-timeline", "shell", "agent", "serve"}
+    KNOWN = {"ingest", "summary", "senders", "reporters", "ips", "pct-timeline", "shell", "agent", "serve"}
     if not argv:
         # No args -> open interactive shell with chooser
         run_shell(db_path=None, client_key=None, pending_ingest=None)
@@ -123,19 +126,23 @@ def main(argv=None):
             console.print("\n[red]^C[/red] summary interrupted")
             return 130
 
-    elif cmd == "domains":
+    elif cmd == "senders":
         try:
             db = _db_path_for(args.client)
-            domains_view(
-                db,
-                limit=args.limit,
-                days=args.days,
-                fail_only=args.fail_only,   # note: flag name is --fail-only
-                sort=args.sort,
-            )
+            senders_view(db, limit=args.limit, days=args.days,
+                         fail_only=args.fail_only, sort=args.sort)
             return 0
         except KeyboardInterrupt:
-            console.print("\n[red]^C[/red] domains interrupted")
+            console.print("\n[red]^C[/red] senders interrupted")
+            return 130
+
+    elif cmd == "reporters":
+        try:
+            db = _db_path_for(args.client)
+            reporters_view(db)
+            return 0
+        except KeyboardInterrupt:
+            console.print("\n[red]^C[/red] reporters interrupted")
             return 130
 
     elif cmd == "pct-timeline":

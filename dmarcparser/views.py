@@ -1,6 +1,6 @@
 from rich.table import Table
 from rich.console import Console
-import sqlite3, json, datetime
+import sqlite3, datetime
 from collections import defaultdict
 
 def _open(db_path):
@@ -161,12 +161,20 @@ def summary_data(db_path, days=None):
     """, params)
     uniq_ips = c.fetchone()[0] or 0
 
+    c.execute(f"""
+        SELECT COUNT(DISTINCT rec.spf_domain)
+        FROM records rec {where_join}
+        WHERE rec.spf_domain IS NOT NULL
+    """, params)
+    uniq_senders = c.fetchone()[0] or 0
+
     return {
         "reports": reports,
         "msgs": msgs,
         "fails": fails,
         "fail_rate": fail_rate,
         "uniq_domains": uniq_domains,
+        "uniq_senders": uniq_senders,
         "uniq_ips": uniq_ips,
         "date_start": date_start,
         "date_end": date_end,
@@ -189,110 +197,6 @@ def summary_view(db_path, days=None):
     table.add_row("Date range", f"{d['date_start'] or '-'} to {d['date_end'] or '-'}")
     Console().print(table)
 
-def _aligned_guess(header_from, spf_domain, dkim_results_json):
-    """Very rough alignment heuristic: SPF domain == header_from OR any DKIM pass for that domain."""
-    try:
-        if header_from and spf_domain and header_from.lower() == (spf_domain or "").lower():
-            return True
-        for d in json.loads(dkim_results_json or "[]"):
-            if (d.get("result","").lower() == "pass" and
-                header_from and d.get("domain") and header_from.lower() == d["domain"].lower()):
-                return True
-    except Exception:
-        pass
-    return False
-
-def domains_data(db_path, limit=25, sort="fail_rate", days=None, fail_only=False):
-    """
-    Return domain aggregation as a list of dicts:
-    [{domain, msgs, fails, fail_rate, aligned_rate, ips}, ...]
-    Already sorted and limited.
-    """
-    conn = _open(db_path)
-    c = conn.cursor()
-
-    join_where = ""
-    params = []
-    if days:
-        c.execute("SELECT MAX(end_ts) FROM reports")
-        max_end = c.fetchone()[0]
-        if max_end:
-            cutoff = int(max_end) - days * 86400
-            join_where = "JOIN reports r ON r.fp_report = rec.fp_report WHERE r.end_ts >= ?"
-            params = [cutoff]
-
-    rows = c.execute(f"""
-        SELECT rec.header_from, rec.source_ip, rec.count, rec.disposition,
-               rec.spf_result, rec.spf_domain, rec.dkim_result, rec.dkim_results_json
-        FROM records rec
-        {join_where}
-    """, params).fetchall()
-
-    agg = {}
-    for hfrom, ip, count, disp, spf_res, spf_dom, dkim_res, dkim_json in rows:
-        if not hfrom:
-            continue
-        a = agg.setdefault(hfrom, {"msgs": 0, "fails": 0, "aligned": 0, "ips": set()})
-        cnt = count or 0
-        a["msgs"] += cnt
-        is_fail = (
-            (disp in ("reject", "quarantine")) or
-            ((not spf_res or spf_res.lower() != "pass") and (not dkim_res or dkim_res.lower() != "pass"))
-        )
-        if is_fail:
-            a["fails"] += cnt
-        if _aligned_guess(hfrom, spf_dom, dkim_json):
-            a["aligned"] += cnt
-        a["ips"].add(ip)
-
-    rows_out = []
-    for hfrom, a in agg.items():
-        if fail_only and a["fails"] == 0:
-            continue
-        msgs = a["msgs"]
-        fails = a["fails"]
-        rows_out.append({
-            "domain": hfrom,
-            "msgs": msgs,
-            "fails": fails,
-            "fail_rate": round((fails / msgs * 100.0) if msgs else 0.0, 1),
-            "aligned_rate": round(((a["aligned"] / msgs) * 100.0) if msgs else 0.0, 1),
-            "ips": len(a["ips"]),
-        })
-
-    sort_key = {
-        "fail_rate": lambda x: (-x["fail_rate"], -x["fails"]),
-        "fails":     lambda x: (-x["fails"], -x["msgs"]),
-        "msgs":      lambda x: (-x["msgs"], -x["fails"]),
-    }.get(sort, lambda x: (-x["fail_rate"], -x["fails"]))
-    rows_out.sort(key=sort_key)
-    return rows_out[:limit] if limit else rows_out
-
-
-def domains_view(db_path, limit=25, sort="fail_rate", days=None, fail_only=False):
-    """Aggregate by header_from domain with msgs/fails/fail%/aligned%/unique IPs."""
-    rows_out = domains_data(db_path, limit=limit, sort=sort, days=days, fail_only=fail_only)
-
-    title = f"DOMAINS (top {limit})" if limit else "DOMAINS"
-    table = Table(title=title)
-    table.add_column("Domain")
-    table.add_column("Msgs", justify="right")
-    table.add_column("Fails", justify="right")
-    table.add_column("Fail%", justify="right")
-    table.add_column("Aligned%", justify="right")
-    table.add_column("IPs", justify="right")
-
-    for rd in rows_out:
-        table.add_row(
-            rd["domain"],
-            str(rd["msgs"]),
-            str(rd["fails"]),
-            f"{rd['fail_rate']:.1f}%",
-            f"{rd['aligned_rate']:.1f}%",
-            str(rd["ips"]),
-        )
-
-    Console().print(table)
 
 def ips_data(db_path, limit=50, days=None, failed_only=False, min_fails=0, sort="fails", auth_breakdown=False):
     """
@@ -434,3 +338,388 @@ def ips_view(db_path, limit=50, days=None, failed_only=False, min_fails=0, sort=
         table.add_row(*row)
 
     Console().print(table)
+
+
+# ---------------------------------------------------------------------------
+# Senders view  (groups by spf_domain)
+# ---------------------------------------------------------------------------
+
+def senders_data(db_path, limit=50, sort="fails", days=None, fail_only=False):
+    """
+    Aggregate by spf_domain.
+    Returns [{domain, msgs, fails, fail_rate, forwarded, fwd_rate, ips, last_seen}, ...]
+    Forwarded = SPF fail AND DKIM pass (classic email-forwarding signature).
+    """
+    conn = _open(db_path)
+    c = conn.cursor()
+
+    params = []
+    join_clause = "JOIN reports r ON r.fp_report = rec.fp_report"
+    where_clause = ""
+    if days:
+        c.execute("SELECT MAX(end_ts) FROM reports")
+        max_end = c.fetchone()[0]
+        if max_end:
+            cutoff = int(max_end) - days * 86400
+            where_clause = "WHERE r.end_ts >= ?"
+            params = [cutoff]
+
+    rows = c.execute(f"""
+        SELECT
+            COALESCE(rec.spf_domain, '[none]')          AS domain,
+            SUM(rec.count)                              AS msgs,
+            SUM(CASE
+                WHEN (rec.disposition IN ('reject','quarantine')
+                  OR (LOWER(COALESCE(rec.spf_result,''))  != 'pass'
+                  AND LOWER(COALESCE(rec.dkim_result,'')) != 'pass'))
+                THEN rec.count ELSE 0 END)              AS fails,
+            SUM(CASE
+                WHEN LOWER(COALESCE(rec.spf_result,''))  != 'pass'
+                 AND LOWER(COALESCE(rec.dkim_result,'')) =  'pass'
+                THEN rec.count ELSE 0 END)              AS forwarded,
+            COUNT(DISTINCT rec.source_ip)               AS ips,
+            MAX(rec.day)                                AS last_seen
+        FROM records rec
+        {join_clause}
+        {where_clause}
+        GROUP BY COALESCE(rec.spf_domain, '[none]')
+    """, params).fetchall()
+
+    out = []
+    for domain, msgs, fails, forwarded, ips, last_seen in rows:
+        msgs = msgs or 0
+        fails = fails or 0
+        forwarded = forwarded or 0
+        if fail_only and fails == 0:
+            continue
+        out.append({
+            "domain":    domain,
+            "msgs":      msgs,
+            "fails":     fails,
+            "fail_rate": round((fails / msgs * 100.0) if msgs else 0.0, 1),
+            "forwarded": forwarded,
+            "fwd_rate":  round((forwarded / msgs * 100.0) if msgs else 0.0, 1),
+            "ips":       ips or 0,
+            "last_seen": last_seen,
+        })
+
+    sort_key = {
+        "fails":     lambda x: (-x["fails"],     -x["msgs"]),
+        "msgs":      lambda x: (-x["msgs"],      -x["fails"]),
+        "fail_rate": lambda x: (-x["fail_rate"], -x["fails"]),
+        "forwarded": lambda x: (-x["forwarded"], -x["msgs"]),
+    }.get(sort, lambda x: (-x["fails"], -x["msgs"]))
+    out.sort(key=sort_key)
+    return out[:limit] if limit else out
+
+
+def senders_view(db_path, limit=50, sort="fails", days=None, fail_only=False):
+    """CLI render of senders_data."""
+    rows = senders_data(db_path, limit=limit, sort=sort, days=days, fail_only=fail_only)
+    title = f"SENDERS (top {limit})" if limit else "SENDERS"
+    table = Table(title=title)
+    table.add_column("Sending Domain")
+    table.add_column("Msgs",      justify="right")
+    table.add_column("Fails",     justify="right")
+    table.add_column("Fail%",     justify="right")
+    table.add_column("Forwarded", justify="right")
+    table.add_column("Fwd%",      justify="right")
+    table.add_column("IPs",       justify="right")
+    table.add_column("Last Seen")
+    for r in rows:
+        table.add_row(
+            r["domain"], str(r["msgs"]), str(r["fails"]),
+            f"{r['fail_rate']:.1f}%", str(r["forwarded"]),
+            f"{r['fwd_rate']:.1f}%", str(r["ips"]),
+            r["last_seen"] or "-",
+        )
+    Console().print(table)
+
+
+# ---------------------------------------------------------------------------
+# Reporters view  (groups by org_name from reports table)
+# ---------------------------------------------------------------------------
+
+def reporters_data(db_path):
+    """
+    Aggregate by reporting organization.
+    Returns [{reporter, reports, messages, first_seen, last_seen}, ...]
+    """
+    conn = _open(db_path)
+    rows = conn.execute("""
+        SELECT
+            COALESCE(rp.org_name, '[unknown]')  AS reporter,
+            COUNT(DISTINCT rp.fp_report)        AS report_count,
+            COALESCE(SUM(rec.count), 0)         AS messages,
+            MIN(rp.end_ts)                      AS first_ts,
+            MAX(rp.end_ts)                      AS last_ts
+        FROM reports rp
+        LEFT JOIN records rec ON rec.fp_report = rp.fp_report
+        GROUP BY COALESCE(rp.org_name, '[unknown]')
+        ORDER BY report_count DESC
+    """).fetchall()
+    return [
+        {
+            "reporter":   r[0],
+            "reports":    r[1],
+            "messages":   r[2],
+            "first_seen": _date_from_epoch(r[3]),
+            "last_seen":  _date_from_epoch(r[4]),
+        }
+        for r in rows
+    ]
+
+
+def reporters_view(db_path):
+    """CLI render of reporters_data."""
+    rows = reporters_data(db_path)
+    table = Table(title="REPORTERS")
+    table.add_column("Reporter")
+    table.add_column("Reports",    justify="right")
+    table.add_column("Messages",   justify="right")
+    table.add_column("First Seen")
+    table.add_column("Last Seen")
+    for r in rows:
+        table.add_row(
+            r["reporter"], str(r["reports"]), str(r["messages"]),
+            r["first_seen"] or "-", r["last_seen"] or "-",
+        )
+    Console().print(table)
+
+
+# ---------------------------------------------------------------------------
+# Drill-down: Reporter detail
+# ---------------------------------------------------------------------------
+
+def reporter_detail_data(db_path, org_name):
+    """
+    All reports from a given org_name, each with message + fail counts.
+    Returns {reporter, reports: [{fp_report, report_id, begin_ts, end_ts,
+                                  policy_domain, msgs, fails}, ...]}
+    """
+    conn = _open(db_path)
+
+    org_filter = None if org_name == "[unknown]" else org_name
+    if org_filter:
+        report_rows = conn.execute("""
+            SELECT rp.fp_report, rp.report_id, rp.begin_ts, rp.end_ts,
+                   rp.policy_domain
+            FROM reports rp
+            WHERE rp.org_name = ?
+            ORDER BY rp.end_ts DESC
+        """, (org_filter,)).fetchall()
+    else:
+        report_rows = conn.execute("""
+            SELECT rp.fp_report, rp.report_id, rp.begin_ts, rp.end_ts,
+                   rp.policy_domain
+            FROM reports rp
+            WHERE rp.org_name IS NULL
+            ORDER BY rp.end_ts DESC
+        """).fetchall()
+
+    fps = [r[0] for r in report_rows]
+    counts = {}
+    if fps:
+        placeholders = ",".join("?" * len(fps))
+        agg_rows = conn.execute(f"""
+            SELECT fp_report,
+                   COALESCE(SUM(count), 0) AS msgs,
+                   COALESCE(SUM(CASE
+                       WHEN (disposition IN ('reject','quarantine')
+                         OR (LOWER(COALESCE(spf_result,''))  != 'pass'
+                         AND LOWER(COALESCE(dkim_result,'')) != 'pass'))
+                       THEN count ELSE 0 END), 0) AS fails
+            FROM records
+            WHERE fp_report IN ({placeholders})
+            GROUP BY fp_report
+        """, fps).fetchall()
+        counts = {fp: (m, f) for fp, m, f in agg_rows}
+
+    reports = []
+    for fp, report_id, begin_ts, end_ts, policy_domain in report_rows:
+        msgs, fails = counts.get(fp, (0, 0))
+        reports.append({
+            "fp_report":     fp,
+            "report_id":     report_id,
+            "begin_ts":      _date_from_epoch(begin_ts),
+            "end_ts":        _date_from_epoch(end_ts),
+            "policy_domain": policy_domain,
+            "msgs":          msgs,
+            "fails":         fails,
+            "fail_rate":     round((fails / msgs * 100.0) if msgs else 0.0, 1),
+        })
+
+    return {"reporter": org_name, "reports": reports}
+
+
+# ---------------------------------------------------------------------------
+# Drill-down: IP detail
+# ---------------------------------------------------------------------------
+
+def ip_detail_data(db_path, ip):
+    """
+    All records for a given source IP, grouped by report.
+    Returns {ip, groups: [{report: {...}, records: [...]}, ...]}
+    """
+    conn = _open(db_path)
+
+    report_rows = conn.execute("""
+        SELECT rp.fp_report, rp.org_name, rp.report_id,
+               rp.begin_ts, rp.end_ts, rp.policy_domain
+        FROM reports rp
+        WHERE rp.fp_report IN (
+            SELECT DISTINCT fp_report FROM records WHERE source_ip = ?
+        )
+        ORDER BY rp.end_ts DESC
+    """, (ip,)).fetchall()
+
+    rec_rows = conn.execute("""
+        SELECT fp_report, day, spf_domain, spf_result, dkim_result, disposition, count
+        FROM records
+        WHERE source_ip = ?
+    """, (ip,)).fetchall()
+
+    recs_by_report = defaultdict(list)
+    for fp, day, spf_dom, spf_res, dkim_res, disp, cnt in rec_rows:
+        recs_by_report[fp].append({
+            "day": day, "spf_domain": spf_dom or "-",
+            "spf_result": spf_res or "-", "dkim_result": dkim_res or "-",
+            "disposition": disp or "-", "count": cnt or 0,
+        })
+
+    groups = []
+    for fp, org, report_id, begin_ts, end_ts, policy_domain in report_rows:
+        groups.append({
+            "report": {
+                "fp_report":     fp,
+                "org_name":      org or "[unknown]",
+                "report_id":     report_id,
+                "begin_ts":      _date_from_epoch(begin_ts),
+                "end_ts":        _date_from_epoch(end_ts),
+                "policy_domain": policy_domain,
+            },
+            "records": recs_by_report.get(fp, []),
+        })
+
+    return {"ip": ip, "groups": groups}
+
+
+# ---------------------------------------------------------------------------
+# Drill-down: Report detail
+# ---------------------------------------------------------------------------
+
+def report_detail_data(db_path, fp_report):
+    """
+    Full detail for a single report.
+    Returns {report: {...}, records: [...]}
+    """
+    conn = _open(db_path)
+
+    rp = conn.execute("""
+        SELECT fp_report, org_name, report_id, begin_ts, end_ts,
+               policy_domain, p, sp, aspf, adkim, pct, fo, np
+        FROM reports WHERE fp_report = ?
+    """, (fp_report,)).fetchone()
+
+    if not rp:
+        return None
+
+    recs = conn.execute("""
+        SELECT source_ip, count, envelope_from, header_from,
+               spf_result, spf_domain, dkim_result, disposition
+        FROM records WHERE fp_report = ?
+        ORDER BY count DESC
+    """, (fp_report,)).fetchall()
+
+    return {
+        "report": {
+            "fp_report":     rp[0],
+            "org_name":      rp[1] or "[unknown]",
+            "report_id":     rp[2],
+            "begin_ts":      _date_from_epoch(rp[3]),
+            "end_ts":        _date_from_epoch(rp[4]),
+            "policy_domain": rp[5],
+            "p":   rp[6],  "sp":   rp[7],
+            "aspf": rp[8], "adkim": rp[9],
+            "pct": rp[10], "fo":   rp[11], "np": rp[12],
+        },
+        "records": [
+            {
+                "source_ip":     r[0],
+                "count":         r[1] or 0,
+                "envelope_from": r[2] or "-",
+                "header_from":   r[3] or "-",
+                "spf_result":    r[4] or "-",
+                "spf_domain":    r[5] or "-",
+                "dkim_result":   r[6] or "-",
+                "disposition":   r[7] or "-",
+            }
+            for r in recs
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Drill-down: Sender detail
+# ---------------------------------------------------------------------------
+
+def sender_detail_data(db_path, domain):
+    """
+    All records for a given spf_domain, grouped by report.
+    Returns {domain, groups: [{report: {...}, records: [...]}, ...]}
+    """
+    conn = _open(db_path)
+
+    spf_filter = None if domain == "[none]" else domain
+    if spf_filter:
+        report_rows = conn.execute("""
+            SELECT rp.fp_report, rp.org_name, rp.report_id,
+                   rp.begin_ts, rp.end_ts, rp.policy_domain
+            FROM reports rp
+            WHERE rp.fp_report IN (
+                SELECT DISTINCT fp_report FROM records WHERE spf_domain = ?
+            )
+            ORDER BY rp.end_ts DESC
+        """, (spf_filter,)).fetchall()
+        rec_rows = conn.execute("""
+            SELECT fp_report, day, source_ip, spf_result, dkim_result, disposition, count
+            FROM records WHERE spf_domain = ?
+        """, (spf_filter,)).fetchall()
+    else:
+        report_rows = conn.execute("""
+            SELECT rp.fp_report, rp.org_name, rp.report_id,
+                   rp.begin_ts, rp.end_ts, rp.policy_domain
+            FROM reports rp
+            WHERE rp.fp_report IN (
+                SELECT DISTINCT fp_report FROM records WHERE spf_domain IS NULL
+            )
+            ORDER BY rp.end_ts DESC
+        """).fetchall()
+        rec_rows = conn.execute("""
+            SELECT fp_report, day, source_ip, spf_result, dkim_result, disposition, count
+            FROM records WHERE spf_domain IS NULL
+        """).fetchall()
+
+    recs_by_report = defaultdict(list)
+    for fp, day, source_ip, spf_res, dkim_res, disp, cnt in rec_rows:
+        recs_by_report[fp].append({
+            "day": day, "source_ip": source_ip or "-",
+            "spf_result": spf_res or "-", "dkim_result": dkim_res or "-",
+            "disposition": disp or "-", "count": cnt or 0,
+        })
+
+    groups = []
+    for fp, org, report_id, begin_ts, end_ts, policy_domain in report_rows:
+        groups.append({
+            "report": {
+                "fp_report":     fp,
+                "org_name":      org or "[unknown]",
+                "report_id":     report_id,
+                "begin_ts":      _date_from_epoch(begin_ts),
+                "end_ts":        _date_from_epoch(end_ts),
+                "policy_domain": policy_domain,
+            },
+            "records": recs_by_report.get(fp, []),
+        })
+
+    return {"domain": domain, "groups": groups}

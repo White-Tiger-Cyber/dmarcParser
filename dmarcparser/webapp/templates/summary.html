@@ -20,7 +20,7 @@
     ("Messages",         data.msgs,         ""),
     ("Estimated Fails",  data.fails,        ""),
     ("Fail Rate",        data.fail_rate|string + "%",  ""),
-    ("Unique Domains",   data.uniq_domains, ""),
+    ("Unique Senders",   data.uniq_senders, ""),
     ("Unique IPs",       data.uniq_ips,     ""),
   ] %}
   {% for label, value, _ in stats %}
@@ -39,15 +39,16 @@
 
 <div class="card">
   <div class="card-body text-muted small">
-    Date range: <strong class="text-light">{{ data.date_start or '—' }}</strong>
-    → <strong class="text-light">{{ data.date_end or '—' }}</strong>
+    Date range: <strong class="text-light">{{ data.date_start or '-' }}</strong>
+    to <strong class="text-light">{{ data.date_end or '-' }}</strong>
     {% if days %}<span class="ms-2">(last {{ days }} days)</span>{% endif %}
   </div>
 </div>
 
 <div class="mt-3 d-flex gap-2">
-  <a href="/client/{{ client.client_name }}/domains"      class="btn btn-sm btn-outline-secondary">→ Domains</a>
-  <a href="/client/{{ client.client_name }}/ips"          class="btn btn-sm btn-outline-secondary">→ IPs</a>
-  <a href="/client/{{ client.client_name }}/pct-timeline" class="btn btn-sm btn-outline-secondary">→ PCT Timeline</a>
+  <a href="/client/{{ client.client_name }}/senders"      class="btn btn-sm btn-outline-secondary">Senders</a>
+  <a href="/client/{{ client.client_name }}/reporters"    class="btn btn-sm btn-outline-secondary">Reporters</a>
+  <a href="/client/{{ client.client_name }}/ips"          class="btn btn-sm btn-outline-secondary">IPs</a>
+  <a href="/client/{{ client.client_name }}/pct-timeline" class="btn btn-sm btn-outline-secondary">PCT Timeline</a>
 </div>
 {% endblock %}

@@ -53,7 +53,9 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td class="ps-3 font-monospace">{{ r.ip }}</td>
+          <td class="ps-3 font-monospace">
+            <a href="/client/{{ client.client_name }}/ip/{{ r.ip }}" class="text-decoration-none">{{ r.ip }}</a>
+          </td>
           <td class="text-end">{{ r.msgs }}</td>
           <td class="text-end">{{ r.fails }}</td>
           <td class="text-end">

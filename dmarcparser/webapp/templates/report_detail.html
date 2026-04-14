@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ client.client_name }} — Report {{ data.report.org_name }}{% endblock %}
+{% block content %}
+<div class="mb-3">
+  <h4 class="mb-0">
+    {{ client.client_name }}
+    <span class="text-muted fs-6">/ report /</span>
+    {{ data.report.org_name }}
+  </h4>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header fw-bold">Report Metadata</div>
+  <div class="card-body">
+    <div class="row g-2 small">
+      <div class="col-md-3"><span class="text-muted">Report ID:</span><br>{{ data.report.report_id or '-' }}</div>
+      <div class="col-md-3"><span class="text-muted">Policy Domain:</span><br><strong>{{ data.report.policy_domain or '-' }}</strong></div>
+      <div class="col-md-3"><span class="text-muted">Window:</span><br>{{ data.report.begin_ts or '-' }} to {{ data.report.end_ts or '-' }}</div>
+      <div class="col-md-3"><span class="text-muted">Policy (p / sp):</span><br>{{ data.report.p or '-' }} / {{ data.report.sp or '-' }}</div>
+      <div class="col-md-3"><span class="text-muted">pct:</span><br>{{ data.report.pct or '-' }}</div>
+      <div class="col-md-3"><span class="text-muted">aspf / adkim:</span><br>{{ data.report.aspf or '-' }} / {{ data.report.adkim or '-' }}</div>
+      <div class="col-md-3"><span class="text-muted">fo:</span><br>{{ data.report.fo or '-' }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header fw-bold">Records</div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0" data-sort-table>
+      <thead>
+        <tr>
+          <th class="sortable ps-3">Source IP</th>
+          <th class="sortable text-end">Count</th>
+          <th class="sortable">Envelope From</th>
+          <th class="sortable">Header From</th>
+          <th class="sortable">SPF Result</th>
+          <th class="sortable">SPF Domain</th>
+          <th class="sortable">DKIM Result</th>
+          <th class="sortable pe-3">Disposition</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in data.records %}
+        <tr>
+          <td class="ps-3 font-monospace">
+            <a href="/client/{{ client.client_name }}/ip/{{ r.source_ip }}" class="text-decoration-none">{{ r.source_ip }}</a>
+          </td>
+          <td class="text-end">{{ r.count }}</td>
+          <td>{{ r.envelope_from }}</td>
+          <td>{{ r.header_from }}</td>
+          <td><span class="badge {% if r.spf_result == 'pass' %}badge-ok{% else %}badge-fail{% endif %}">{{ r.spf_result }}</span></td>
+          <td>
+            <a href="/client/{{ client.client_name }}/sender/{{ r.spf_domain }}" class="text-decoration-none">{{ r.spf_domain }}</a>
+          </td>
+          <td><span class="badge {% if r.dkim_result == 'pass' %}badge-ok{% else %}badge-fail{% endif %}">{{ r.dkim_result }}</span></td>
+          <td class="pe-3">
+            <span class="badge {% if r.disposition == 'reject' %}badge-fail{% elif r.disposition == 'quarantine' %}bg-warning text-dark{% else %}badge-ok{% endif %}">
+              {{ r.disposition }}
+            </span>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted py-4">No records</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
