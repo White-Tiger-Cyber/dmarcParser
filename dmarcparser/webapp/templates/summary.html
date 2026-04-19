@@ -14,6 +14,7 @@
   </form>
 </div>
 
+<!-- Stat cards -->
 <div class="row g-3 mb-4">
   {% set stats = [
     ("Reports",          data.reports,      ""),
@@ -37,7 +38,21 @@
   {% endfor %}
 </div>
 
-<div class="card">
+<!-- Daily chart -->
+{% if timeline %}
+<div class="card mb-4">
+  <div class="card-header text-muted small">
+    Daily traffic &amp; fail rate
+    <span class="ms-2" style="font-size:0.75rem;">({{ days or 90 }} days)</span>
+  </div>
+  <div class="card-body" style="position:relative;height:220px;">
+    <canvas id="summaryChart"></canvas>
+  </div>
+</div>
+{% endif %}
+
+<!-- Date range -->
+<div class="card mb-3">
   <div class="card-body text-muted small">
     Date range: <strong class="text-light">{{ data.date_start or '-' }}</strong>
     to <strong class="text-light">{{ data.date_end or '-' }}</strong>
@@ -51,4 +66,87 @@
   <a href="/client/{{ client.client_name }}/ips"          class="btn btn-sm btn-outline-secondary">IPs</a>
   <a href="/client/{{ client.client_name }}/pct-timeline" class="btn btn-sm btn-outline-secondary">PCT Timeline</a>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if timeline %}
+<script>
+(function() {
+  var labels = {{ timeline | map(attribute='date')     | list | tojson }};
+  var msgs   = {{ timeline | map(attribute='msgs')     | list | tojson }};
+  var fails  = {{ timeline | map(attribute='fail_rate')| list | tojson }};
+
+  new Chart(document.getElementById('summaryChart').getContext('2d'), {
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          type: 'bar',
+          label: 'Messages',
+          data: msgs,
+          backgroundColor: 'rgba(88, 166, 255, 0.25)',
+          borderColor:     'rgba(88, 166, 255, 0.6)',
+          borderWidth: 1,
+          yAxisID: 'yMsgs',
+          order: 2,
+        },
+        {
+          type: 'line',
+          label: 'Fail %',
+          data: fails,
+          borderColor:     '#da3633',
+          backgroundColor: 'rgba(218, 54, 51, 0.1)',
+          borderWidth: 2,
+          pointRadius: 2,
+          tension: 0.3,
+          fill: true,
+          yAxisID: 'yFail',
+          order: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          labels: { color: '#8b949e', boxWidth: 12, font: { size: 11 } }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(c) {
+              return c.dataset.label === 'Fail %'
+                ? ' Fail %: ' + c.parsed.y.toFixed(1) + '%'
+                : ' Messages: ' + c.parsed.y;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#8b949e', maxTicksLimit: 12, font: { size: 10 } },
+          grid:  { color: '#21262d' },
+        },
+        yMsgs: {
+          position: 'left',
+          beginAtZero: true,
+          ticks: { color: '#58a6ff', font: { size: 10 } },
+          grid:  { color: '#21262d' },
+          title: { display: true, text: 'Messages', color: '#58a6ff', font: { size: 10 } },
+        },
+        yFail: {
+          position: 'right',
+          beginAtZero: true,
+          max: 100,
+          ticks: { color: '#da3633', font: { size: 10 }, callback: function(v) { return v + '%'; } },
+          grid:  { drawOnChartArea: false },
+          title: { display: true, text: 'Fail %', color: '#da3633', font: { size: 10 } },
+        },
+      },
+    },
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

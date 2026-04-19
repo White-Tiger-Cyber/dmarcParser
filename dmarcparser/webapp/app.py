@@ -64,7 +64,10 @@ def create_app(index_db_path=None, filter_client=None):
         client = _resolve_client(name)
         days = request.args.get("days", type=int)
         data = views.summary_data(client["db_path"], days=days)
-        return render_template("summary.html", client=client, data=data, days=days)
+        chart_days = days if days else 90
+        timeline = views.pct_timeline_data(client["db_path"], days=chart_days)
+        return render_template("summary.html", client=client, data=data, days=days,
+                               timeline=timeline)
 
     @app.route("/client/<name>/ips")
     def client_ips(name):
